@@ -1,12 +1,12 @@
 use prusti_rustc_interface::middle::{mir, ty};
 use prusti_utils::config;
 use task_encoder::{EncodeFullError, EncodeFullResult, TaskEncoder, TaskEncoderDependencies};
-use vir::{CallableIdn, CastType, FunctionIdn};
+use vir::{CallableIdn, CastType, ExprBool, FunctionIdn};
 
 use crate::encoders::ty::{
     RustTyDecomposition,
     generics::GParams,
-    interpretation::float::FloatDomain,
+    interpretation::{bitvec::{BitVecEnc, BitVecSize}, float::FloatDomain},
     pure::{TyPurePrimData, TyPurePrimDataKind},
     use_pure::TyUsePureEnc,
 };
@@ -228,8 +228,7 @@ impl MirBuiltinEnc {
             TyPurePrimDataKind::Native(prim_l_ty) => {
                 let lhs = (prim_l_ty.snap_to_prim)(lhs);
                 let rhs = (prim_r_ty.expect_native().snap_to_prim)(rhs);
-                let (pres, val) = Self::handle_bin_op_native(vcx, lhs, rhs, res_ty, op, l_ty, r_ty);
-                let val = (prim_res_ty.prim_to_snap)(val);
+                let (pres, val) = Self::handle_bin_op_native(vcx, deps, lhs, rhs, res_ty, op, l_ty, r_ty, prim_res_ty);
                 Ok(vcx.mk_function(
                     function,
                     (lhs_decl, rhs_decl),
@@ -247,17 +246,96 @@ impl MirBuiltinEnc {
         }
     }
 
+    fn handle_bin_op_conv_int_to_bitvec<'vir>(
+        vcx: &'vir vir::VirCtxt<'vir>,
+        deps: &mut TaskEncoderDependencies<'vir, Self>,
+        lhs: vir::ExprPrim<'vir>,
+        rhs: vir::ExprPrim<'vir>,
+        res_ty: ty::Ty<'vir>,
+        op: mir::BinOp,
+        l_ty: ty::Ty<'vir>,
+    ) -> vir::ExprCSnap<'vir> {
+        let bitvec = deps.require_dep::<BitVecEnc>(match l_ty.kind() {
+            ty::TyKind::Int(int_ty) => match int_ty {
+                ty::IntTy::Isize => match isize::BITS {
+                    32 => BitVecSize::BitVec32,
+                    64 => BitVecSize::BitVec64,
+                    _ => unreachable!()
+                },
+                ty::IntTy::I8 => BitVecSize::BitVec8,
+                ty::IntTy::I16 => BitVecSize::BitVec16,
+                ty::IntTy::I32 => BitVecSize::BitVec32,
+                ty::IntTy::I64 => BitVecSize::BitVec64,
+                ty::IntTy::I128 => BitVecSize::BitVec128,
+            },
+            ty::TyKind::Uint(uint_ty) => match uint_ty {
+                ty::UintTy::Usize => match usize::BITS {
+                    32 => BitVecSize::BitVec32,
+                    64 => BitVecSize::BitVec64,
+                    _ => unreachable!()
+                },
+                ty::UintTy::U8 => BitVecSize::BitVec8,
+                ty::UintTy::U16 => BitVecSize::BitVec16,
+                ty::UintTy::U32 => BitVecSize::BitVec32,
+                ty::UintTy::U64 => BitVecSize::BitVec64,
+                ty::UintTy::U128 => BitVecSize::BitVec128,
+            },
+            _ => unreachable!(),
+        }).unwrap();
+
+        let lhs_val = (bitvec.from_int)(lhs);
+        let rhs_val = (bitvec.from_int)(rhs);
+
+        match op {
+            mir::BinOp::Add => todo!(),
+            mir::BinOp::AddUnchecked => todo!(),
+            mir::BinOp::AddWithOverflow => todo!(),
+            mir::BinOp::Sub => todo!(),
+            mir::BinOp::SubUnchecked => todo!(),
+            mir::BinOp::SubWithOverflow => todo!(),
+            mir::BinOp::Mul => todo!(),
+            mir::BinOp::MulUnchecked => todo!(),
+            mir::BinOp::MulWithOverflow => todo!(),
+            mir::BinOp::Div => todo!(),
+            mir::BinOp::Rem => todo!(),
+            mir::BinOp::BitXor => todo!(),
+            mir::BinOp::BitAnd => (bitvec.bv_and)(lhs_val, rhs_val),
+            mir::BinOp::BitOr => todo!(),
+            mir::BinOp::Shl => todo!(),
+            mir::BinOp::ShlUnchecked => todo!(),
+            mir::BinOp::Shr => todo!(),
+            mir::BinOp::ShrUnchecked => todo!(),
+            mir::BinOp::Eq => todo!(),
+            mir::BinOp::Lt => todo!(),
+            mir::BinOp::Le => todo!(),
+            mir::BinOp::Ne => todo!(),
+            mir::BinOp::Ge => todo!(),
+            mir::BinOp::Gt => todo!(),
+            mir::BinOp::Cmp => todo!(),
+            mir::BinOp::Offset => todo!(),
+        }
+
+    }
+
     fn handle_bin_op_native<'vir>(
         vcx: &'vir vir::VirCtxt<'vir>,
+        deps: &mut TaskEncoderDependencies<'vir, Self>,
         lhs: vir::ExprPrim<'vir>,
         mut rhs: vir::ExprPrim<'vir>,
         res_ty: ty::Ty<'vir>,
         op: mir::BinOp,
         l_ty: ty::Ty<'vir>,
         _r_ty: ty::Ty<'vir>,
-    ) -> (Vec<vir::ExprBool<'vir>>, vir::ExprPrim<'vir>) {
+        prim_res_ty: &'vir TyPurePrimData<'vir>,
+    ) -> (Vec::<ExprBool<'vir>>, vir::ExprCSnap<'vir>) {
         use mir::BinOp::*;
-        if matches!(op, Shl | Shr) {
+
+        if matches!(op, Shl | Shr | BitAnd | BitOr | BitXor) && l_ty.is_integral() {
+            return (Vec::new(), Self::handle_bin_op_conv_int_to_bitvec(vcx, deps, lhs, rhs, res_ty, op, l_ty));
+        }
+
+        let (pres, bool_expr) = {
+            if matches!(op, Shl | Shr) {
             // RHS must be smaller than the bit width of the LHS, this is
             // implicit in the `Shl` and `Shr` operators.
             rhs = vcx.mk_bin_op_expr(
@@ -431,6 +509,8 @@ impl MirBuiltinEnc {
                 Cmp => unreachable!(),
             }
         }
+        };
+        (pres, (prim_res_ty.prim_to_snap)(bool_expr))
     }
 
     fn handle_bin_op_float<'vir>(

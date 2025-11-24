@@ -5,6 +5,7 @@ use vir::{
 
 #[derive(Eq, PartialEq, Hash, Debug, Clone, Copy)]
 pub enum BitVecSize {
+    BitVec8,
     BitVec16,
     BitVec32,
     BitVec64,
@@ -15,6 +16,7 @@ pub enum BitVecSize {
 pub struct BitVecDomain<'vir> {
     pub domain: vir::DomainIdn<'vir, vir::CSnap>,
     pub from_int: FunctionIdn<'vir, vir::Prim, vir::CSnap>,
+    pub bv_and: FunctionIdn<'vir, (vir::CSnap, vir::CSnap), vir::CSnap>,
 }
 
 pub struct BitVecEnc;
@@ -46,6 +48,7 @@ impl TaskEncoder for BitVecEnc {
     ) -> task_encoder::EncodeFullResult<'vir, Self> {
         vir::with_vcx(|vcx| {
             let domain_name = match *task_key {
+                BitVecSize::BitVec8 => "s_BitVec_8",
                 BitVecSize::BitVec16 => "s_BitVec_16",
                 BitVecSize::BitVec32 => "s_BitVec_32",
                 BitVecSize::BitVec64 => "s_BitVec_64",
@@ -68,6 +71,7 @@ impl TaskEncoder for BitVecEnc {
                 from_int,
                 false,
                 Some(match *task_key {
+                    BitVecSize::BitVec8 => "(_ int2bv 8)",
                     BitVecSize::BitVec16 => "(_ int2bv 16)",
                     BitVecSize::BitVec32 => "(_ int2bv 32)",
                     BitVecSize::BitVec64 => "(_ int2bv 64)",
@@ -75,7 +79,17 @@ impl TaskEncoder for BitVecEnc {
                 }),
             );
 
-            let functions = &[from_int_data];
+            let bv_and_name = vir::vir_format!(vcx, "{}_and", domain_name);
+
+            let bv_and = FunctionIdn::new(
+                ViperIdent::new(bv_and_name),
+                (self_type, self_type),
+                self_type
+            );
+
+            let bv_and_data = vcx.mk_domain_function(bv_and, false, Some("bvand"));
+
+            let functions = &[from_int_data, bv_and_data];
 
             let domain_data = vcx.mk_domain::<(), !>(
                 domain_ident.name(),
@@ -83,6 +97,16 @@ impl TaskEncoder for BitVecEnc {
                 &[],
                 vcx.alloc_slice(functions),
                 match *task_key {
+                    BitVecSize::BitVec8 => Some(vcx.alloc_slice(&[
+                        vcx.alloc(BackendInterpretationPair {
+                            key: "SMTLIB",
+                            value: "(_ BitVec 8)",
+                        }),
+                        vcx.alloc(BackendInterpretationPair {
+                            key: ("Boogie"),
+                            value: ("bv8"),
+                        }),
+                    ])),
                     BitVecSize::BitVec16 => Some(vcx.alloc_slice(&[
                         vcx.alloc(BackendInterpretationPair {
                             key: "SMTLIB",
@@ -132,6 +156,7 @@ impl TaskEncoder for BitVecEnc {
                 BitVecDomain {
                     domain: domain_ident,
                     from_int,
+                    bv_and,
                 },
             ))
         })
