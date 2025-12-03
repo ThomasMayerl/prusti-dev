@@ -1,5 +1,7 @@
 use pcg::{borrow_checker::r#impl::NllBorrowCheckerImpl, borrow_pcg::FunctionData};
 use prusti_rustc_interface::{middle::mir, span::def_id::DefId};
+use prusti_rustc_interface::middle::mir::{Body, StatementKind, TerminatorKind, Rvalue, BinOp};
+use prusti_rustc_interface::middle::ty::TyCtxt;
 use task_encoder::{EncodeFullResult, OutputRefAny, TaskEncoder, TaskEncoderDependencies};
 use vir::MethodIdn;
 
@@ -112,6 +114,35 @@ pub(super) struct MethodEncOutput<'vir> {
 
 #[derive(Clone, Debug)]
 pub enum MethodEncError {}
+
+fn body_uses_bitwise_ops<'tcx>(body: &Body<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
+    for bb in body.basic_blocks.iter() {
+        for stmt in &bb.statements {
+            if let StatementKind::Assign(box (_, rvalue)) = &stmt.kind {
+                if rvalue_is_bitwise(body, rvalue, tcx) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn rvalue_is_bitwise<'tcx>(body: &Body<'tcx>, rv: &Rvalue<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
+    match rv {
+        Rvalue::BinaryOp(op, box(l_ty, r_ty)) => matches!(
+            op,
+            BinOp::BitAnd
+                | BinOp::BitOr
+                | BinOp::BitXor
+                | BinOp::Shl
+                | BinOp::Shr
+                | BinOp::ShlUnchecked
+                | BinOp::ShrUnchecked
+        ) && l_ty.ty(body, tcx).is_integral() && r_ty.ty(body, tcx).is_integral(),
+        _ => false,
+    }
+}
 
 impl TaskEncoder for MethodEnc {
     task_encoder::encoder_cache!(MethodEnc);
@@ -239,6 +270,9 @@ impl TaskEncoder for MethodEnc {
                 ));
 
                 deps.check_cycle()?;
+
+                let uses_int_bitops = body_uses_bitwise_ops(body, vcx.tcx());
+
                 let mut visitor = ImpureEncVisitor {
                     vcx,
                     deps,
@@ -261,6 +295,7 @@ impl TaskEncoder for MethodEnc {
                     current_stmts: None,
                     current_terminator: None,
                     encoded_blocks,
+                    uses_int_bitops,
                 };
                 visitor.visit_body(body);
                 start_stmts.extend(

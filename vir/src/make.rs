@@ -994,7 +994,7 @@ impl<'tcx> VirCtxt<'tcx> {
             rets,
             pres,
             posts,
-            body: blocks.map(|blocks| self.alloc(MethodBodyGenData { blocks })),
+            body: blocks.map(|blocks| self.alloc(MethodBodyGenData { blocks }))
         })
     }
 

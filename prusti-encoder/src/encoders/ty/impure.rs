@@ -93,7 +93,7 @@ pub struct TyImpureEncLocal<'vir> {
 
 impl TaskEncoder for TyImpureEnc {
     task_encoder::encoder_cache!(TyImpureEnc);
-    type TaskDescription<'vir> = RustTy<'vir>;
+    type TaskDescription<'vir> = (RustTy<'vir>, bool);
 
     type OutputFullDependency<'vir> = TyImpure<'vir>;
     type OutputFullLocal<'vir> = TyImpureEncLocal<'vir>;
@@ -109,13 +109,13 @@ impl TaskEncoder for TyImpureEnc {
         deps: &mut TaskEncoderDependencies<'vir, Self>,
     ) -> EncodeFullResult<'vir, Self> {
         deps.emit_output_ref(*task_key, ())?;
-        let snap = deps.require_dep::<TyPureEnc>(*task_key)?;
+        let snap = deps.require_dep::<TyPureEnc>(task_key.0)?;
         let snapshot = (snap.domain)();
 
-        let ty = task_key.zip(snap);
+        let ty = task_key.0.zip(snap);
 
         vir::with_vcx(|vcx| {
-            let mut builder = PredicateBuilder::new(deps, vcx, task_key, snapshot);
+            let mut builder = PredicateBuilder::new(deps, vcx, task_key.0, snapshot);
 
             let ref_self_decl = builder.ref_self_decl();
             let ref_self = vcx.mk_local_ex(ref_self_decl);
@@ -162,9 +162,12 @@ impl TaskEncoder for TyImpureEnc {
                 TySpecifics::Opaque(opaque) => TySpecifics::Opaque(
                     super::kinds::opaque::ty_impure(opaque, deps, &mut builder)?,
                 ),
-                TySpecifics::Primitive(prim) => TySpecifics::Primitive(
-                    super::kinds::primitive::ty_impure(prim, deps, &mut builder)?,
-                ),
+                TySpecifics::Primitive(prim) => match prim.0.kind() {
+                    ty::TyKind::Int(_) | ty::TyKind::Uint(_) => {}
+                    _ => TySpecifics::Primitive(
+                        super::kinds::primitive::ty_impure(prim, deps, &mut builder)?,
+                    )
+                },
                 TySpecifics::ImmRef(immref) => TySpecifics::ImmRef(
                     super::kinds::immref::ty_impure(immref, deps, &mut builder)?,
                 ),

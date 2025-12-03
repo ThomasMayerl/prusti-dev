@@ -73,6 +73,8 @@ where
     pub current_terminator: Option<vir::TerminatorStmt<'vir>>,
 
     pub encoded_blocks: Vec<vir::CfgBlock<'vir>>, // TODO: use IndexVec ?
+
+    pub uses_int_bitops: bool,
 }
 
 /// Represents the translation of a MIR place. If the place crosses a shared
@@ -147,7 +149,7 @@ impl<'vir, 'enc, E: TaskEncoder> ImpureEncVisitor<'vir, 'enc, E> {
     }
 
     fn ty_use_impure(&mut self, ty: ty::Ty<'vir>) -> TyUseImpure<'vir> {
-        let ty_task = RustTyDecomposition::from_ty(ty, self.vcx.tcx(), self.def_id);
+        let ty_task = RustTyDecomposition::from_ty_and_bool(ty, self.vcx.tcx(), self.def_id, self.uses_int_bitops);
         self.deps.require_dep::<TyUseImpureEnc>(ty_task).unwrap()
     }
 

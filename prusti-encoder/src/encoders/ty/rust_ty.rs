@@ -18,6 +18,7 @@ use super::{
 pub struct RustTyDecomposition<'tcx> {
     pub ty: RustTy<'tcx>,
     pub args: GArgs<'tcx>,
+    pub use_bitvec_for_int: bool,
 }
 
 impl<'tcx, Ctxt> HasRegions<'tcx, Ctxt> for RustTyDecomposition<'tcx> {
@@ -69,7 +70,17 @@ impl<'tcx> RustTyDecomposition<'tcx> {
         context: impl Into<GParams<'tcx>>,
     ) -> Self {
         let (ty, args) = TyData::<'tcx, RustTyDatas>::from_ty(ty, tcx, context.into());
-        Self { ty, args }
+        Self { ty, args, use_bitvec_for_int: false }
+    }
+
+    pub fn from_ty_and_bool(
+        ty: ty::Ty<'tcx>,
+        tcx: ty::TyCtxt<'tcx>,
+        context: impl Into<GParams<'tcx>>,
+        use_bitvec_for_int: bool,
+    ) -> Self {
+        let (ty, args) = TyData::<'tcx, RustTyDatas>::from_ty(ty, tcx, context.into());
+        Self { ty, args, use_bitvec_for_int }
     }
 
     /// Same as `from_ty` to get a `RustTyDecomposition` for use in encoding,
@@ -77,7 +88,7 @@ impl<'tcx> RustTyDecomposition<'tcx> {
     pub fn from_prim_ty(ty: ty::Ty<'tcx>) -> Self {
         assert!(ty.is_primitive());
         let (ty, args) = TyData::<'tcx, RustTyDatas>::from_prim_ty(ty);
-        Self { ty, args }
+        Self { ty, args, use_bitvec_for_int: false }
     }
 }
 
@@ -164,7 +175,7 @@ impl<'tcx> LazyRustTy<'tcx> {
         let TySpecifics::Param(..) = &param.specifics else {
             return None;
         };
-        let RustTyDecomposition { ty, args } = self.decompose_normalize(args);
+        let RustTyDecomposition { ty, args, .. } = self.decompose_normalize(args);
         if let TySpecifics::Param(..) = &ty.specifics {
             None
         } else {

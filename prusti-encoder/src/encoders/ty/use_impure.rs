@@ -105,7 +105,7 @@ impl TaskEncoder for TyUseImpureEnc {
     ) -> EncodeFullResult<'vir, Self> {
         deps.emit_output_ref(*task_key, ())?;
 
-        let ty_impure = deps.require_dep::<TyImpureEnc>(task_key.ty)?;
+        let ty_impure = deps.require_dep::<TyImpureEnc>((task_key.ty, task_key.use_bitvec_for_int))?;
         let mut walker = TyUseImpureWalker::new(deps, task_key.args);
         let ty_use_impure = walker.encode_ty(task_key.ty.zip(ty_impure));
         Ok(((), ty_use_impure.alloc()))
