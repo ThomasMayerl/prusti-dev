@@ -53,3 +53,7 @@ PRUSTI_SMT_TRACE_QUANTIFIER_TRIGGERS=<quantifier-id> \
 ```
 
 You can find the list of quantifier ids and names in `log/smt/<function>/trace1.log.unique-triggers.csv`. Running the `smt-log-analyzer` will generate `log/smt/<function>/trace1.log.quantifier-<quantifier-id>-triggers.csv` file containing all triggers used to instantiate the quantifier.
+
+### Debugging incorrect permissions / fold-unfold placement
+
+If Prusti fails with a permission error that looks wrong (e.g. a missing predicate access that should logically hold), the issue is most likely in how the [PCG](../encoding/procedures.md) computed capabilities/repacks for the function, rather than in Viper itself. The `pcg` crate can dump the computed capability and borrow graphs for a function (its `visualization` module); check `pcg`'s own documentation/tests for the current flag or environment variable to enable this, as it is still evolving. [`PRUSTI_DUMP_VIPER_PROGRAM`](../config/flags.md#dump_viper_program) remains the first thing to check, to see exactly which `fold`/`unfold`/predicate statements were actually emitted for the function in question.

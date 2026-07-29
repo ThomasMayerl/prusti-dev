@@ -1,51 +1,58 @@
 # Repository Layout
 
-This section describes the crates located in the Prusti repository, their function, and key modules. Some important files are linked and described individually, although this list is far from complete.
+This section describes the crates located in the Prusti repository, their function, and key modules. Some important files are linked and described individually, although this list is far from complete. See [Architecture at a Glance](architecture.md) for how these crates fit together, and its ["where do I change...?" table](architecture.md#where-do-i-change-quick-index) for a task-oriented index into this list.
 
-## Binaries
+## Binaries and launching
 
-These crates relate to the runnable executables produced during compilation.
-
- - [`prusti/`](https://github.com/viperproject/prusti-dev/tree/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti)
-   - [`src/bin/prusti-driver.rs`](https://github.com/viperproject/prusti-dev/blob/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti/src/bin/prusti-driver.rs) - invokes the Rust compiler with Prusti callbacks set up.
-   - [`src/bin/prusti-rustc.rs`](https://github.com/viperproject/prusti-dev/blob/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti/src/bin/prusti-rustc.rs) - spawns `prusti-driver` with the correct environment.
- - [`prusti-launch/`](https://github.com/viperproject/prusti-dev/tree/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-launch) - utilities for Prusti binaries.
- - [`prusti-server/`](https://github.com/viperproject/prusti-dev/tree/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-server) - [Prusti compilation server](pipeline/viper.md#prusti-server).
+ - [`prusti/`](https://github.com/viperproject/prusti-dev/tree/master/prusti) - the compiler-facing driver.
+   - [`src/driver.rs`](https://github.com/viperproject/prusti-dev/blob/master/prusti/src/driver.rs) - `main()` for the `prusti-driver` binary; sets up rustc arguments/flags and installs the Prusti `rustc_driver::Callbacks`.
+   - [`src/callbacks.rs`](https://github.com/viperproject/prusti-dev/blob/master/prusti/src/callbacks.rs) - `PrustiCompilerCalls`, overriding the `mir_borrowck`/`mir_promoted` queries (to retain borrow-checking facts needed later by the PCG) and hooking `after_expansion`/`after_analysis` to collect specs and trigger verification.
+   - [`src/verifier.rs`](https://github.com/viperproject/prusti-dev/blob/master/prusti/src/verifier.rs) - `verify`, the small function gluing `prusti-encoder::test_entrypoint` to `prusti-server::verify_programs`.
+ - [`prusti-launch/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-launch) - the user-facing binaries: `prusti-rustc` (single-file, like `rustc`), `cargo-prusti` (whole-crate/workspace, like `cargo build`), and `prusti-server` (standalone background verification server). These set up environment variables/sysroot and spawn `prusti-driver`.
+ - [`prusti-server/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-server) - [Prusti compilation server](pipeline/viper.md#prusti-server): keeps a JVM/Silicon instance warm, caches verification results, streams progress.
+ - [`prusti-rustc-interface/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-rustc-interface) - a thin crate that just re-exports the (unstable, `rustc_private`) compiler crates (`rustc_middle`, `rustc_hir`, `rustc_borrowck`, `rustc_driver`, ...) under a single dependency, so the rest of Prusti depends on one crate instead of many `rustc_*` crates directly.
 
 ## Specification parsing
 
-These crates relate to parsing Prusti-specific specifications in Rust code (e.g. `requires`, `ensures`, etc). These specifications are defined using [procedural macros](https://doc.rust-lang.org/reference/procedural-macros.html), which must be contained in their own crates, hence the additional `prusti-contracts/*` crates.
+These crates relate to parsing Prusti-specific specifications in Rust code (e.g. `requires`, `ensures`, etc). These specifications are defined using [procedural macros](https://doc.rust-lang.org/reference/procedural-macros.html), which must be contained in their own crates; they live in the nested `prusti-contracts/` Cargo workspace, which is deliberately excluded from the top-level workspace (it must itself be built and verified using an already-built `cargo-prusti`; see [`prusti-contracts-build/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-contracts-build) below).
 
- - [`prusti-contracts/prusti-contracts/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-contracts/prusti-contracts) - stubs for Rust pseudo-functions used in specifications; currently `old` and `before_expiry`. It also reexports the procedural macros `requires`, `ensures`, etc. Depending on the `prusti` feature, it exports either `impl` or `internal`.
- - [`prusti-contracts/prusti-contracts-proc-macros/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-contracts/prusti-contracts-proc-macros) – a procedural macro crate that either forwards calls to `prusti-specs` (if the `prusti` feature is enabled) or tries to be invisible when compiling with the regular compiler (if the `prusti` feature is disabled). The `prusti` feature is set automatically when compiling with Prusti.
- - [`prusti-contracts/prusti-specs/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-contracts/prusti-specs) - does the specification rewriting.
- - [`prusti-contracts/prusti-contracts-test`](https://github.com/viperproject/prusti-dev/tree/master/prusti-contracts/prusti-contracts-test) – a minimal test that checks that `prusti-contracts` can be used with a regular compiler.
+ - [`prusti-contracts/prusti-contracts/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-contracts/prusti-contracts) - the library users actually depend on: stubs for Prusti pseudo-functions used in specifications (`old`, `before_expiry`, ...), re-exports of the attribute macros, and spec-annotated wrappers for parts of `core`/`alloc`/`std` so that standard library calls can appear in verified code.
+ - [`prusti-contracts/prusti-contracts-proc-macros/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-contracts/prusti-contracts-proc-macros) – the actual `#[proc_macro_attribute]`/`#[proc_macro]` entry points (`requires`, `ensures`, `pure`, `invariant`, `trusted`, `predicate!`, `extern_spec`, ...). Each has a `#[cfg(feature = "prusti")]` implementation that forwards to `prusti-specs`, and a no-op fallback so specifications compile away to nothing when built with a regular `rustc`/`cargo`. The `prusti` feature is enabled automatically when compiling with Prusti.
+ - [`prusti-contracts/prusti-specs/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-contracts/prusti-specs) - does the actual specification rewriting; see [Specification collection](pipeline/specs.md).
+ - [`prusti-contracts/prusti-contracts-test/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-contracts/prusti-contracts-test) – a minimal test that checks that `prusti-contracts` can be used with a regular compiler (specs compiling away to nothing).
+ - [`prusti-contracts-build/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-contracts-build) - a build-dependency crate (used by Prusti's own build, not by downstream users) whose `build.rs` copies the freshly-built `cargo-prusti`/`prusti-rustc`/`prusti-driver` binaries and then invokes `cargo-prusti` on the nested `prusti-contracts/` workspace, so `prusti-contracts` itself gets compiled (and self-verified) using the Prusti currently being built.
 
 ## Common library code
 
-These crates contain the majority of Prusti's code.
+These crates contain the majority of Prusti's logic: collecting specifications, encoding Rust into Viper, and running the verifier.
 
- - [`prusti-common/`](https://github.com/viperproject/prusti-dev/tree/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-common) - common modules used across Prusti (code independent from Rust internals).
-   - [`src/vir/`](https://github.com/viperproject/prusti-dev/tree/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-common/src/vir) - VIR.
-     - [`ast/`](https://github.com/viperproject/prusti-dev/tree/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-common/src/vir/ast) - Viper IR enum definitions and methods to generate Viper code (as text).
-     - [`optimizations/`](https://github.com/viperproject/prusti-dev/tree/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-common/src/vir/optimizations) - optimizations of Viper IR.
-     - [`borrows.rs`](https://github.com/viperproject/prusti-dev/blob/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-common/src/vir/borrows.rs) - reborrowing DAG definition.
-     - [`conversions.rs`](https://github.com/viperproject/prusti-dev/blob/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-common/src/vir/conversions.rs) - implicit casts from Rust types to Viper IR.
-     - [`program.rs`](https://github.com/viperproject/prusti-dev/blob/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-common/src/vir/program.rs) - struct holding a full Viper program.
-     - [`to_viper.rs`](https://github.com/viperproject/prusti-dev/blob/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-common/src/vir/to_viper.rs) - conversion of `vir` module structs to Viper AST.
-     - [`utils.rs`](https://github.com/viperproject/prusti-dev/blob/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-common/src/vir/utils.rs) - functional operations on VIR.
-   - (+ other utility code)
- - [`prusti-interface/`](https://github.com/viperproject/prusti-dev/tree/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-interface) - wrapper around the Rust compiler internals that aims to provide a more stable interface (however, it fails to **completely** encapsulate the Rust compiler from its clients).
-   - [`src/environment/`](https://github.com/viperproject/prusti-dev/tree/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-interface/src/environment) - most of the wrapper code lives here.
-   - [`src/specs/`](https://github.com/viperproject/prusti-dev/tree/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-interface/src/specs) – collect type-checked specifications.
- - [`prusti-viper/`](https://github.com/viperproject/prusti-dev/tree/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/prusti-viper) - MIR to VIR encoding.
+ - [`prusti-interface/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-interface) - wrapper around the Rust compiler internals that aims to provide a more stable interface, plus the specification-collection pipeline. Despite its `Cargo.toml` description ("Interface between prusti and prusti-viper"), which predates the rewrite, it is now the interface between the driver (`prusti`) and the encoder (`prusti-encoder`); `prusti-viper` no longer depends on it.
+   - [`src/environment/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-interface/src/environment) - most of the compiler-wrapping code lives here (`Environment`, MIR body access including cross-crate, loop/procedure utilities).
+   - [`src/specs/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-interface/src/specs) – collects and type-checks specifications; see [Specification collection](pipeline/specs.md). Key items: `SpecCollector` (`mod.rs`), the typed `DefSpecificationMap` (`typed.rs`), cross-crate spec (de)serialization (`cross_crate.rs`, `encoder.rs`, `decoder.rs`).
+   - [`src/utils.rs`](https://github.com/viperproject/prusti-dev/blob/master/prusti-interface/src/utils.rs) - helpers for reading the `#[prusti::...]` marker attributes left behind by the proc-macros.
+ - [`prusti-utils/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-utils) - dependency-light utilities shared by almost every crate.
+   - `config` - the global configuration singleton accessed everywhere as `prusti_utils::config::*`; see [Configuration](config/summary.md).
+   - `report/` - user-facing message printing (`report::user`) and structured debug-log dumping (`report::log`).
+   - `launch/` - shared logic for locating/spawning Prusti's own binaries and the Viper installation, used by `prusti-launch` and `prusti-contracts-build`.
+ - [`task-encoder/`](https://github.com/viperproject/prusti-dev/tree/master/task-encoder) - defines the generic, memoizing `TaskEncoder` trait used throughout `prusti-encoder`; see [Task encoders](encoding/task-encoder.md).
+ - [`vir/`](https://github.com/viperproject/prusti-dev/tree/master/vir) - Prusti's own intermediate representation (VIR) and its arena/context; see [The VIR intermediate representation](encoding/vir.md).
+ - [`vir-proc-macro/`](https://github.com/viperproject/prusti-dev/tree/master/vir-proc-macro) - derive macros (`VirHash`, `VirReify`, `VirSerde`) used to generate boilerplate for the many VIR node types in `vir/src/gendata.rs`.
+ - [`pcg/`](https://github.com/viperproject/prusti-dev/tree/master/pcg) - the Place Capability Graph analysis: a MIR dataflow analysis, built on `rustc`'s NLL/Polonius borrow-checking facts, that tracks ownership/capabilities of places and borrow relationships across the CFG. Pulled in as a **git submodule** (see [Setup](development/setup.md)). See [Procedure encoding and the PCG](encoding/procedures.md).
+ - [`prusti-encoder/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-encoder) - the actual MIR-to-VIR encoder; this is where most feature-specific encoding logic lives, organized as a large collection of `TaskEncoder` implementations under [`src/encoders/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-encoder/src/encoders). See [Encoding Architecture](encoding/summary.md) for a guided tour of this directory.
+ - [`prusti-viper/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-viper) - now a small crate with a single job: converting a finished `vir::Program` into a Viper AST (JVM objects), via the `ToViper`/`ToViperVec` traits implemented for every VIR node kind ([`src/lib.rs`](https://github.com/viperproject/prusti-dev/blob/master/prusti-viper/src/lib.rs)). It is *not* where MIR is encoded any more (that moved to `prusti-encoder`); its old `foldunfold` fixpoint pass and reborrowing-DAG logic have no equivalent here, since the PCG now does that job upstream, directly on MIR.
+ - [`ide/`](https://github.com/viperproject/prusti-dev/tree/master/ide) - produces the JSON payloads (embedded in compiler diagnostics) consumed by the "Prusti Assistant" VS Code extension: the list of verifiable items and external calls (`IdeInfo`/`compiler_info.rs`), per-call contract spans (`encoding_info.rs`), per-item verification results (`ide_verification_result.rs`), and a `fake_error` workaround to defeat cargo's result caching when only collecting IDE info.
 
-## JVM bindings
+## Viper / JVM bindings
 
-- [`viper-sys`](https://github.com/viperproject/prusti-dev/tree/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/viper-sys) – low-level (unsafe) JVM bindings.
-- [`viper`](https://github.com/viperproject/prusti-dev/tree/9ca9cd1b9bcfd9870691fa5a7a957a90987ba4af/viper) – higher-level JVM bindings.
+ - [`viper-sys/`](https://github.com/viperproject/prusti-dev/tree/master/viper-sys) – low-level (auto-generated, unsafe) JNI bindings to specific Java/Scala classes of the Viper/Silicon/Carbon jars. Generated at build time by `viper-sys/build.rs` using `jni-gen`; requires `VIPER_HOME` to be set even to build.
+ - [`viper/`](https://github.com/viperproject/prusti-dev/tree/master/viper) – the ergonomic, hand-written Rust wrapper used by the rest of Prusti: JVM startup (`viper.rs`), Viper AST construction (`ast_factory/`), running the verifier and classifying results (`verifier.rs`, `verification_result.rs`), and a persistent verification-result cache (`cache.rs`).
+ - [`jni-gen/`](https://github.com/viperproject/prusti-dev/tree/master/jni-gen) – the build-time code generator (Java bytecode introspection via ASM) that produces `viper-sys`'s bindings. Only used as a build-dependency of `viper-sys`, not at runtime.
+ - [`prusti-smt-solver/`](https://github.com/viperproject/prusti-dev/tree/master/prusti-smt-solver) – an optional wrapper binary placed between Silicon and the real `z3` executable, used to capture full SMT trace logs for performance debugging (see [Debugging](development/debug.md)).
+ - [`smt-log-analyzer/`](https://github.com/viperproject/prusti-dev/tree/master/smt-log-analyzer) – parses the Z3 trace log format and computes quantifier-instantiation statistics/bounds from the logs produced by `prusti-smt-solver`.
 
-## Deprecated or removed
+## Other
 
- - `prusti-filter/` - walks through Rust crates to check which are supported by Prusti (used for evaluation in Prusti publication).
- - `prusti-macros/` - macros to simplify parsing code.
+ - [`tracing/`](https://github.com/viperproject/prusti-dev/tree/master/tracing) - small crate of tracing/logging helpers shared across the workspace.
+ - `analysis/` - an older MIR dataflow-analysis framework (predecessor of `pcg`). It is commented out of the workspace `Cargo.toml` and not compiled; treat it as vestigial.
+ - `core/`, `alloc/` - not Rust crates; these contain extracted Rust standard library doctest snippets used as additional test/benchmark inputs, unrelated to the encoding architecture.
+ - `docs/` - sources for this developer guide and the [user guide](https://viperproject.github.io/prusti-dev/user-guide/) (both [mdBook](https://rust-lang.github.io/mdBook/) projects), plus the dependency-graph generation script.

@@ -83,7 +83,7 @@
 | [`USE_SMT_WRAPPER`](#use_smt_wrapper) | `bool` | `false` | A |
 | [`VERIFICATION_DEADLINE`](#verification_deadline) | `Option<u64>` | `None` | A |
 | [`VERIFY_ONLY_BASIC_BLOCK_PATH`](#verify_only_basic_block_path) | `Vec<String>` | `vec![]` | A |
-| [`VERIFY_ONLY_DEFPATH`](#verify_only_defpath) | `Vec<String>` | `vec![]` | A |
+| [`VERIFY_ONLY_DEFPATHS`](#verify_only_defpaths) | `Vec<String>` | `vec![]` | A |
 | [`VERIFY_ONLY_PREAMBLE`](#verify_only_preamble) | `bool` | `false` | A |
 | [`VIPER_BACKEND`](#viper_backend) | `String` | `"Silicon"` | A |
 | [`VIPER_HOME`](#viper_home) | `Option<String>` | `None` | A |
@@ -129,11 +129,13 @@ The path to `cargo` when running `cargo prusti`. Useful if `cargo` is not availa
 
 ## `CHECK_FOLDUNFOLD_STATE`
 
+> **Note:** This flag dates from the pre-rewrite architecture's separate `fold`/`unfold` inference pass. The current encoder places permission-manipulating statements directly during encoding, driven by the [PCG](../encoding/procedures.md) analysis; this flag is not currently read by that code path.
+
 When enabled, additional, *slow*, checks for the `fold`/`unfold` algorithm will be generated.
 
 ## `CHECK_OVERFLOWS`
 
-When enabled, binary operations and numeric casts will be checked for overflows. See [integer type encoding](../encoding/types-heap.md#i-u-char).
+When enabled, binary operations and numeric casts will be checked for overflows. See [type encoding](../encoding/types.md).
 
 ## `CHECK_PANICS`
 
@@ -174,9 +176,13 @@ When enabled, the state of the fold-unfold algorithm after each step will be dum
 
 ## `DUMP_PATH_CTXT_IN_DEBUG_INFO`
 
+> **Note:** Dates from the pre-rewrite architecture; not currently read by the [PCG](../encoding/procedures.md)-based encoder.
+
 When enabled, branch context state will be output in debug files.
 
 ## `DUMP_REBORROWING_DAG_IN_DEBUG_INFO`
+
+> **Note:** Dates from the pre-rewrite architecture's hand-rolled reborrowing DAG; not currently read by the [PCG](../encoding/procedures.md)-based encoder, which tracks borrows differently.
 
 When enabled, reborrowing DAGs will be output in debug files.
 
@@ -224,6 +230,8 @@ Additional arguments to pass to the JVM when launching a verifier backend.
 Additional arguments to pass to the verifier backend.
 
 ## `FOLDUNFOLD_STATE_FILTER`
+
+> **Note:** Dates from the pre-rewrite architecture; not currently read by the [PCG](../encoding/procedures.md)-based encoder.
 
 Filter for `fold`/`unfold` nodes when debug info is dumped.
 

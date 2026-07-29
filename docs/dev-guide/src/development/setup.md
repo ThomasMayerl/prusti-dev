@@ -7,6 +7,16 @@ This section details the setup required before Prusti can be built from source.
  - [`rustup`](https://rustup.rs/)
  - [Python 3](https://www.python.org/downloads/) (for [`x.py`](#xpy))
 
+## Git submodules
+
+The [`pcg`](../layout.md) crate (the borrow-aware permission analysis used by the encoder) lives in its own repository, checked out as a git submodule. After cloning, run:
+
+```bash
+$ git submodule update --init
+```
+
+before building; otherwise the build will fail with `pcg` missing from the workspace. `x.py setup` does not currently do this for you.
+
 ## `x.py`
 
 `x.py` is a Python script that provides a convenient wrapper for a Prusti development setup. It can be initialized by running:
