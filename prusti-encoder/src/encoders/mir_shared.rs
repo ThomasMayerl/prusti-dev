@@ -6,6 +6,7 @@ use crate::encoders::{
     ConstEnc, MirBuiltinBinOpEnc, MirBuiltinBinOpTask, MirBuiltinUnOpEnc, MirBuiltinUnOpTask,
     MirBuiltinUseCastEnc, MirBuiltinUseCastTask, PrustiBuiltin, PrustiBuiltinEnc,
     PrustiBuiltinTask,
+    builtin::{MirBuiltinNullOpEnc, MirBuiltinNullOpTask},
     r#const::ConstEncTask,
     ty::{
         RustTyDecomposition,
@@ -197,6 +198,21 @@ pub(crate) trait PureRvalueEnc<'vir> {
             .deps()
             .require_dep::<MirBuiltinUnOpEnc>(MirBuiltinUnOpTask::new(rvalue_ty, op, operand_ty))?;
         Ok(un_op_function.call()(encoded_operand.downcast_ty()))
+    }
+
+    fn encode_nullary_op_snap(
+        &mut self,
+        rvalue_ty: ty::Ty<'vir>,
+        op: mir::NullOp<'vir>,
+        ty: ty::Ty<'vir>,
+        _ctxt: &Self::EncodePlaceCtxt,
+    ) -> ExprResult<'vir, Self> {
+        let rvalue_ty = RustTyDecomposition::from_ty(rvalue_ty, self.context());
+        let ty = RustTyDecomposition::from_ty(ty, self.context());
+        let null_op_function = self
+            .deps()
+            .require_dep::<MirBuiltinNullOpEnc>(MirBuiltinNullOpTask::new(rvalue_ty, op, ty))?;
+        Ok(null_op_function.call()())
     }
 
     /// The generic arguments of a call from this encoder's body: `args`

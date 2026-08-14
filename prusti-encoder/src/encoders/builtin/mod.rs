@@ -3,11 +3,13 @@ mod use_metadata;
 mod cast;
 mod un_op;
 mod bin_op;
+mod nullop;
 mod metadata;
 mod prusti;
 
 pub use bin_op::*;
 pub use metadata::*;
+pub use nullop::*;
 pub use prusti::*;
 pub use un_op::*;
 pub use use_cast::*;

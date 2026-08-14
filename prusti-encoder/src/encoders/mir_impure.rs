@@ -336,6 +336,11 @@ impl<'vir, 'enc, E: TaskEncoder> ImpureEncVisitor<'vir, 'enc, E> {
                 .map_err(EncodeRvalueError::from)?
                 .into()),
 
+            mir::Rvalue::NullaryOp(nullop, ty) => Ok(self
+                .encode_nullary_op_snap(rvalue_ty, *nullop, *ty, operand_snaps)
+                .map_err(EncodeRvalueError::from)?
+                .into()),
+
             mir::Rvalue::Aggregate(box _kind @ mir::AggregateKind::Array(..), elements) => {
                 let e_rvalue_ty = self.ty_use_pure(rvalue_ty);
                 let al = e_rvalue_ty.expect_array();
@@ -457,6 +462,23 @@ impl<'vir, 'enc, E: TaskEncoder> ImpureEncVisitor<'vir, 'enc, E> {
                 let raw = self.ty_use_pure(rvalue_ty).expect_raw();
                 Ok(raw
                     .prim_to_snap(place_expr.expr.address, metadata)
+                    .upcast_ty()
+                    .into())
+            }
+
+            mir::Rvalue::ShallowInitBox(op, ty) => {
+                let box_ty = self.ty_use_pure(rvalue_ty).expect_unique();
+                let snap = self.encode_operand_snap(op, operand_snaps)?.downcast_ty();
+                let snap_ty = self.ty_use_impure(*ty);
+                let raw_ty = self
+                    .ty_use_pure(op.ty(self.body, self.vcx.tcx()))
+                    .expect_raw();
+                Ok(box_ty
+                    .prim_to_snap(
+                        raw_ty.address_access(snap),
+                        raw_ty.metadata_access(snap),
+                        snap_ty.ref_to_snap(raw_ty.address_access(snap)),
+                    )
                     .upcast_ty()
                     .into())
             }

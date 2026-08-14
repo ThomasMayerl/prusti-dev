@@ -90,6 +90,7 @@ pub fn test_entrypoint<'tcx>(
     crate::encoders::MethodCallEnc::emit_outputs(&mut program);
 
     program.header("MIR builtins");
+    crate::encoders::MirBuiltinNullOpEnc::emit_outputs(&mut program);
     crate::encoders::MirBuiltinUnOpEnc::emit_outputs(&mut program);
     crate::encoders::MirBuiltinBinOpEnc::emit_outputs(&mut program);
     crate::encoders::MirBuiltinUseCastEnc::emit_outputs(&mut program);
