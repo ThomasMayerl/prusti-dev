@@ -169,7 +169,7 @@ impl TaskEncoder for TyUsePureEnc {
     ) -> EncodeFullResult<'vir, Self> {
         let ty_pure_ref = deps.require_ref::<TyPureEnc>(task_key.ty)?;
         let args = deps.require_dep::<GArgsTyEnc>(task_key.args)?;
-        let snapshot = ty_pure_ref.snapshot;
+        let snapshot = ty_pure_ref.deep_snapshot;
         let inner = TyUsePureRef {
             args,
             snapshot,
@@ -391,7 +391,7 @@ impl<'vir> TyUsePureImmRef<'vir> {
     ) -> vir::ExprGenCSnap<'vir, Curr, Next> {
         let metadata = self.metadata_caster.cast_to_callee_ctx(metadata);
         let inner = self.referent_caster.cast_to_callee_ctx(inner);
-        self.pure.prim_to_snap.call()(ref_, metadata.downcast_ty(), inner.downcast_ty())
+        self.pure.prim_to_deep_snap.call()(ref_, metadata.downcast_ty(), inner.downcast_ty())
     }
 
     pub fn addr_access<Curr, Next>(
@@ -416,7 +416,7 @@ impl<'vir> TyUsePureImmRef<'vir> {
         snap: vir::ExprGenCSnap<'vir, Curr, Next>,
     ) -> vir::ExprGenCSnap<'vir, Curr, Next> {
         vir::with_vcx(|vcx| {
-            self.pure.prim_to_snap.call()(
+            self.pure.prim_to_deep_snap.call()(
                 vcx.mk_null().lazy(),
                 self.pure.metadata_access.call()(snap),
                 self.pure.value_access.call()(snap),
@@ -473,7 +473,7 @@ impl<'vir> TyUsePureMutRef<'vir> {
             .metadata_caster
             .cast_to_callee_ctx(metadata)
             .downcast_ty();
-        self.pure.prim_to_snap.call()(ref_, metadata, self.cast_to_callee_ctx(val))
+        self.pure.prim_to_deep_snap.call()(ref_, metadata, self.cast_to_callee_ctx(val))
     }
 
     pub fn deref_access<Curr, Next>(
