@@ -6,6 +6,7 @@ pub mod float;
 pub mod result;
 pub mod slice;
 pub mod ops;
+pub mod option;
 
 pub use eq::PureEq;
 
