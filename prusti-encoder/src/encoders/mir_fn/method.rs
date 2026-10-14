@@ -245,7 +245,7 @@ impl TaskEncoder for MethodEnc {
             // ..
             pres.extend(wands.indirect_pres(vcx, &arg_defs, deps));
             posts.extend(wands.indirect_posts(vcx, &arg_defs, deps));
-            posts.extend(wands.wand_posts(vcx, &arg_defs, deps));
+            posts.extend(wands.wand_posts(vcx, &arg_defs, false, deps));
 
             // The method of a pure function `f` gets the postcondition
             //     ensures snap(result) == f_(old(snap(args)))
