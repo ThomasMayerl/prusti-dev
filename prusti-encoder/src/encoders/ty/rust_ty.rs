@@ -446,25 +446,36 @@ impl<'tcx> TyData<'tcx, RustTyDatas> {
     /// Whether the deep snapshot of `ty` can differ from its shallow one, i.e.
     /// whether it can hold the value behind a mutable reference.
     fn construct_deep_snapshot(ty: ty::Ty<'tcx>) -> bool {
+        vir::with_vcx(|vcx| Self::ty_constructs_deep_snapshot(vcx.tcx(), ty, &mut Vec::new()))
+    }
+
+    /// See `construct_deep_snapshot`. `visited` are the ADTs already being
+    /// looked at.
+    fn ty_constructs_deep_snapshot(
+        tcx: ty::TyCtxt<'tcx>,
+        ty: ty::Ty<'tcx>,
+        visited: &mut Vec<DefId>,
+    ) -> bool {
         match ty.kind() {
             ty::TyKind::Ref(_, _, ty::Mutability::Mut) => true,
-            ty::TyKind::Adt(adt, _) => vir::with_vcx(|vcx| {
-                Self::adt_constructs_deep_snapshot(vcx.tcx(), *adt, &mut Vec::new())
-            }),
+            ty::TyKind::Adt(adt, _) => Self::adt_constructs_deep_snapshot(tcx, ty, *adt, visited),
             _ => false,
         }
     }
 
     /// An ADT is encoded once over its generic parameters, whose snapshots
     /// are shallow, so only its fields of other types can hold the value
-    /// behind a mutable reference. `visited` are the ADTs already being looked
-    /// at.
+    /// behind a mutable reference.
     fn adt_constructs_deep_snapshot(
         tcx: ty::TyCtxt<'tcx>,
+        ty: ty::Ty<'tcx>,
         adt: ty::AdtDef<'tcx>,
         visited: &mut Vec<DefId>,
     ) -> bool {
-        if visited.contains(&adt.did()) {
+        // An opaque type's predicate abstracts everything it owns, including
+        // the referents of its mutable references (it has no indirect
+        // predicates), so its snapshot already is the deep one.
+        if TySpecifics::is_opaque_adt(tcx, ty, adt) || visited.contains(&adt.did()) {
             return false;
         }
         visited.push(adt.did());
@@ -478,13 +489,8 @@ impl<'tcx> TyData<'tcx, RustTyDatas> {
         let identity = ty::GenericArgs::identity_for_item(tcx, adt.did());
         has_lifetime
             && adt.all_fields().any(|field| {
-                match field.ty(tcx, identity).skip_normalization().kind() {
-                    ty::TyKind::Ref(_, _, ty::Mutability::Mut) => true,
-                    ty::TyKind::Adt(field_adt, _) => {
-                        Self::adt_constructs_deep_snapshot(tcx, *field_adt, visited)
-                    }
-                    _ => false,
-                }
+                let field_ty = field.ty(tcx, identity).skip_normalization();
+                Self::ty_constructs_deep_snapshot(tcx, field_ty, visited)
             })
     }
 
@@ -694,12 +700,15 @@ impl<'tcx> TySpecifics<'tcx, RustTyDatas> {
         if ty.is_primitive() {
             return Self::from_prim_ty(ty);
         }
-        if crate::encoders::is_type_trusted(ty) {
-            return TySpecifics::mk_opaque(());
-        }
-
         match ty.kind() {
-            ty::TyKind::Adt(adt, _) => Self::from_adt(*adt),
+            ty::TyKind::Adt(adt, _) => {
+                let tcx = vir::with_vcx(|vcx| vcx.tcx());
+                if Self::is_opaque_adt(tcx, ty, *adt) {
+                    TySpecifics::mk_opaque(())
+                } else {
+                    Self::from_adt(*adt)
+                }
+            }
             ty::TyKind::Tuple(args) => {
                 let fields = args
                     .iter()
@@ -792,17 +801,20 @@ impl<'tcx> TySpecifics<'tcx, RustTyDatas> {
         TySpecifics::mk_primitive(ty)
     }
 
+    /// Whether the ADT `ty` (of definition `adt`) is encoded as an opaque type.
+    fn is_opaque_adt(tcx: ty::TyCtxt<'tcx>, ty: ty::Ty<'tcx>, adt: ty::AdtDef<'tcx>) -> bool {
+        // `DynMetadata<dyn Trait>` is the metadata of a `&dyn`/`*dyn`
+        // wide pointer. We never reason about vtable contents, so encode it
+        // as an opaque snapshot rather than recursing into its `Foreign`
+        // `VTable` field (which has no `ty_name`).
+        crate::encoders::is_type_trusted(ty)
+            || tcx.lang_items().get(LangItem::DynMetadata) == Some(adt.did())
+            || adt.is_union() // TODO: Add Union support
+    }
+
+    /// The specifics of an ADT that is not opaque (see `is_opaque_adt`).
     fn from_adt(adt: ty::AdtDef<'tcx>) -> Self {
-        if vir::with_vcx(|vcx| vcx.tcx().lang_items().get(LangItem::DynMetadata) == Some(adt.did()))
-        {
-            // `DynMetadata<dyn Trait>` is the metadata of a `&dyn`/`*dyn`
-            // wide pointer. We never reason about vtable contents, so encode it
-            // as an opaque snapshot rather than recursing into its `Foreign`
-            // `VTable` field (which has no `ty_name`).
-            TySpecifics::mk_opaque(())
-        } else if vir::with_vcx(|vcx| {
-            EnvQuery::new(vcx.tcx()).is_adt_in_crate(adt, "prusti_contracts")
-        }) {
+        if vir::with_vcx(|vcx| EnvQuery::new(vcx.tcx()).is_adt_in_crate(adt, "prusti_contracts")) {
             match adt.non_enum_variant().name.to_string().as_str() {
                 "Int" => Self::Builtin(RustBuiltinData::Int),
                 "Real" => Self::Builtin(RustBuiltinData::Real),
@@ -851,10 +863,7 @@ impl<'tcx> TySpecifics<'tcx, RustTyDatas> {
                     let data = Self::from_enum(adt);
                     Self::EnumLike(data)
                 }
-                ty::AdtKind::Union => {
-                    // TODO: add union support
-                    Self::mk_opaque(())
-                }
+                ty::AdtKind::Union => unreachable!("unions are opaque"),
             }
         }
     }
