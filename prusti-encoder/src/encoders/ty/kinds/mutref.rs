@@ -9,7 +9,7 @@ use crate::encoders::{
     },
 };
 use task_encoder::{EncodeFullError, TaskEncoderDependencies};
-use vir::{CallableIdn, CastType};
+use vir::CastType;
 
 pub(crate) fn ty_pure<'vir>(
     task_key: &TyData<'vir, RustTyDatas>,
@@ -27,7 +27,7 @@ pub(crate) fn ty_pure<'vir>(
         builder.constructor("", (vir::TYPE_REF, metadata, referent), None);
 
     let (field_snaps_to_snap_shallow, field_access_shallow) =
-        builder.constructor("shallow", (vir::TYPE_REF, metadata), None);
+        builder.shallow_constructor("", (vir::TYPE_REF, metadata), None);
 
     let deep_snap_fields: (
         vir::AdtDestructor<'vir, vir::CSnap, vir::Ref>,
@@ -46,47 +46,20 @@ pub(crate) fn ty_pure<'vir>(
         field_access_shallow[1].downcast_ty(),
     );
 
-    // The address and metadata of a snapshot, whether it was built with the
-    // deep or the shallow constructor.
-    let vcx = builder.vcx;
-    let snap_decl = vcx.mk_local_decl("snap", builder.self_type());
-    let snap = vcx.mk_local_ex(snap_decl);
-    let is_shallow =
-        vcx.mk_adt_discriminator_expr(snap, field_snaps_to_snap_shallow.name().to_str());
-    let addr = builder.function(
-        "addr",
-        builder.self_type(),
-        vir::TYPE_REF,
-        (snap_decl,),
-        &[],
-        &[],
-        Some(vcx.mk_ternary_expr(
-            is_shallow,
-            shallow_snap_fields.0.call()(snap),
+    // The shallow snapshot keeps the address and the metadata.
+    builder.define_to_shallow(|_, snap| {
+        Some(field_snaps_to_snap_shallow.call()(
             deep_snap_fields.0.call()(snap),
-        )),
-    );
-    let metadata_fn = builder.function(
-        "metadata",
-        builder.self_type(),
-        metadata,
-        (snap_decl,),
-        &[],
-        &[],
-        Some(vcx.mk_ternary_expr(
-            is_shallow,
-            shallow_snap_fields.1.call()(snap),
             deep_snap_fields.1.call()(snap),
-        )),
-    );
+        ))
+    });
 
     Ok(TyPureMutRefData {
         prim_to_deep_snap: field_snaps_to_snap,
         prim_to_shallow_snap: field_snaps_to_snap_shallow,
         deep_snap_fields,
         shallow_snap_fields,
-        addr,
-        metadata: metadata_fn,
+        shallow_ty: builder.shallow_type(),
     })
 }
 

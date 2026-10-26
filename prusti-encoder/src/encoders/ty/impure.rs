@@ -117,6 +117,12 @@ pub struct TyImpureRef<'vir> {
     /// `TyImpureEncLocalRef::apply_method_assign`.
     pub(super) method_assign:
         MethodIdn<'vir, (vir::Ref, vir::ManyTyVal, vir::ManyCSnap, vir::Snap)>,
+    /// Converts a deep snapshot into the shallow one that `method_assign`
+    /// takes (see `TyPureRef::to_shallow`), with the shallow snapshot's type.
+    pub(super) to_shallow: Option<(
+        FunctionIdn<'vir, vir::CSnap, vir::CSnap>,
+        vir::TypeSnap<'vir>,
+    )>,
 }
 
 impl<'vir> task_encoder::OutputRefAny for TyImpureRef<'vir> {}
@@ -185,6 +191,7 @@ impl TaskEncoder for TyImpureEnc {
                 ref_to_deep_snap: builder.ref_to_deep_snap,
                 ref_to_shallow_snap: builder.ref_to_shallow_snap,
                 method_assign,
+                to_shallow: snap.to_shallow.map(|f| (f, shallow_snapshot)),
             };
             deps.emit_output_ref(*task_key, data)?;
 

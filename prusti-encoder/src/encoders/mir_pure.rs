@@ -12,7 +12,6 @@ use crate::encoders::{
 use itertools::Itertools;
 use pcg::utils::Place;
 use prusti_rustc_interface::{
-    abi,
     data_structures::graph::{self, Successors},
     index::IndexVec,
     middle::{
@@ -57,11 +56,7 @@ pub struct MirPureEncOutput<'vir> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PureKind {
-    /// A specification's closure (e.g. of a quantifier), within an impure
-    /// method's specification or spec block if `in_impure_context`.
-    Closure {
-        in_impure_context: bool,
-    },
+    Closure,
     /// A specification, attached to the item `context` specifies. That is
     /// not the specified item itself when an `impl` refines the
     /// specification of a trait: there the trait's parameters (notably
@@ -133,7 +128,7 @@ impl TaskEncoder for MirPureEnc {
             // instantiated with the arguments of the encoding.
             let identity = ty::GenericArgs::identity_for_item(vcx.tcx(), def_id);
             let body = match kind {
-                PureKind::Closure { .. } => vcx.body_mut().get_closure_body(def_id, identity, None),
+                PureKind::Closure => vcx.body_mut().get_closure_body(def_id, identity, None),
                 PureKind::Spec { context, .. } => {
                     let substs = vcx.tcx().mk_args(gargs.args());
                     vcx.body_mut().get_spec_body(def_id, substs, Some(context))
@@ -298,11 +293,6 @@ struct Enc<'vir: 'enc, 'enc> {
     rel1_mode: bool,
     before_expiry_mode: bool,
     impure_context: bool,
-    /// Whether a dereferenced mutable reference may have a shallow snapshot,
-    /// which holds no value for its referent (see `encode_place_with_ref`).
-    /// Not in an impure context, which reads the referent from the heap, nor
-    /// in a closure there, whose snapshots are those of the specification.
-    check_mut_derefs: bool,
 }
 
 struct EncodedPlace<'vir> {
@@ -413,16 +403,6 @@ impl<'vir: 'enc, 'enc> Enc<'vir, 'enc> {
                     mode: MirSpecEncMode::Impure,
                     ..
                 } | PureKind::SpecBlock(..)
-            ),
-            check_mut_derefs: !matches!(
-                kind,
-                PureKind::Spec {
-                    mode: MirSpecEncMode::Impure,
-                    ..
-                } | PureKind::SpecBlock(..)
-                    | PureKind::Closure {
-                        in_impure_context: true
-                    }
             ),
         }
     }
@@ -954,6 +934,12 @@ impl<'vir: 'enc, 'enc> Enc<'vir, 'enc> {
                             .iter()
                             .map(|arg| self.encode_operand_snap(&arg.node, &new_curr_ver))
                             .collect::<Result<Vec<_>, _>>()?;
+                        if let Some(idx) = pure_func.shallow_arg(&snap_args) {
+                            return Err(self.unsupported_rvalue(
+                                shallow_arg_message(&args[idx].node, self.body),
+                                args[idx].span,
+                            ));
+                        }
                         Ok(pure_func.call_pure(snap_args))
                     } else {
                         panic!("call to unknown non-pure function in pure code ({def_id:?})");
@@ -1184,11 +1170,25 @@ impl<'vir: 'enc, 'enc> Enc<'vir, 'enc> {
                                 .require_dep::<crate::encoders::TyUseImpureEnc>(inner_ty_task)
                                 .unwrap();
                             caster.cast_to_caller_ctx(inner_ty.ref_to_deep_snap(ref_expr))
+                        } else if e_ty.is_shallow(snap) {
+                            // E.g. a mutable reference read out of a type
+                            // parameter's snapshot (such as a tuple's field),
+                            // which is shallow.
+                            // TODO: Enable deep snapshots of generic types
+                            return Err(self.unsupported_rvalue(
+                                format!(
+                                    "dereference of the mutable reference `{}` in pure code, \
+                                     whose snapshot does not hold the value behind it (e.g. as \
+                                     it is stored in a tuple, a field of generic type or \
+                                     another reference)",
+                                    place_ty.ty
+                                ),
+                                self.current_span(),
+                            ));
                         } else {
-                            // Elsewhere the snapshot is deep (see
-                            // `encode_place_with_ref`), so the value behind the
-                            // mutable reference is part of it. (Reading the
-                            // heap would not work in axioms.)
+                            // Elsewhere the value behind the mutable reference
+                            // is part of its deep snapshot. (Reading the heap
+                            // would not work in axioms.)
                             e_ty.value_access(snap)
                         };
                         EncodedPlace::new(val_expr, Some(ref_expr)).with_metadata(metadata)
@@ -1300,35 +1300,8 @@ impl<'vir: 'enc, 'enc> Enc<'vir, 'enc> {
             self.mk_local_ex(place.local, curr_ver[&place.local])
         };
         let mut encoded_place = EncodedPlace::new(expr, None);
-        // Outside of an impure context, the value behind a mutable reference
-        // is read out of the reference's snapshot. Only a deep snapshot holds
-        // it, i.e. one whose enclosing places' types all construct deep
-        // snapshots (in a tuple, for example, the reference's snapshot is
-        // shallow).
-        let context = self.context;
-        let constructs_deep_snapshot = move |ty| {
-            RustTyDecomposition::from_ty(ty, context)
-                .ty
-                .construct_deep_snapshot
-        };
-        let mut deep = constructs_deep_snapshot(place_ty.ty);
         // TODO: factor this out (duplication with impure encoder)?
         for elem in place.projection {
-            if self.check_mut_derefs
-                && !deep
-                && matches!(elem, mir::ProjectionElem::Deref)
-                && matches!(place_ty.ty.kind(), TyKind::Ref(.., ty::Mutability::Mut))
-            {
-                return Err(self.unsupported_rvalue(
-                    format!(
-                        "dereference of the mutable reference `{}` in pure code, unless it is \
-                         in an argument or the result outside of shared references, tuples, \
-                         other types without lifetime parameters, and fields of generic type",
-                        place_ty.ty
-                    ),
-                    self.current_span(),
-                ));
-            }
             // The snapshots of the arguments and the result are pinned to a
             // state, so the only read of the heap is the dereference of a
             // mutable reference in an impure context; only that is wrapped.
@@ -1340,29 +1313,8 @@ impl<'vir: 'enc, 'enc> Enc<'vir, 'enc> {
                 && self.impure_context
                 && matches!(elem, mir::ProjectionElem::Deref)
                 && matches!(place_ty.ty.kind(), TyKind::Ref(.., ty::Mutability::Mut));
-            // An ADT is encoded once over its generic parameters, so a field
-            // whose declared type is a type parameter (or an alias of one)
-            // is read through the parameter's snapshot, which is the shallow
-            // snapshot of the instantiated type, even if the ADT's snapshot
-            // is deep.
-            // We currently do not allow this case to stay sound.
-            // TODO: Enable deep snapshots of generic types or nested mutrefs
-            let generic_field = match (elem, place_ty.ty.kind()) {
-                (mir::ProjectionElem::Field(field, _), TyKind::Adt(adt, _)) => {
-                    let tcx = self.vcx.tcx();
-                    let variant = place_ty.variant_index.unwrap_or(abi::FIRST_VARIANT);
-                    let identity = ty::GenericArgs::identity_for_item(tcx, adt.did());
-                    let declared = adt.variant(variant).fields[*field].ty(tcx, identity);
-                    matches!(
-                        declared.skip_normalization().kind(),
-                        TyKind::Param(_) | TyKind::Alias(..)
-                    )
-                }
-                _ => false,
-            };
             encoded_place = self.encode_place_element(curr_ver, place_ty, *elem, encoded_place)?;
             place_ty = place_ty.projection_ty(self.vcx.tcx(), *elem);
-            deep &= !generic_field && constructs_deep_snapshot(place_ty.ty);
             if heap_read && self.old_mode {
                 let inner = encoded_place.snap;
                 encoded_place.snap = self.vcx.mk_lazy_expr(
@@ -1463,9 +1415,7 @@ impl<'vir: 'enc, 'enc> Enc<'vir, 'enc> {
             .deps
             .require_dep::<MirPureEnc>(MirPureEncTask {
                 encoding_depth: self.encoding_depth + 1,
-                kind: PureKind::Closure {
-                    in_impure_context: !self.check_mut_derefs,
-                },
+                kind: PureKind::Closure,
                 parent_def_id: cl_def_id,
                 gargs: GParams::from(cl_def_id).identity_args(),
             })?
@@ -1698,4 +1648,17 @@ impl<'vir> fmt::Display for Version<'vir> {
             write!(f, "{}", self.index)
         }
     }
+}
+
+/// The error for passing `arg` to a pure function that takes its deep
+/// snapshot, which it does not have (see `FunctionCallEncOutput::shallow_arg`).
+pub(crate) fn shallow_arg_message<'vir>(
+    arg: &mir::Operand<'vir>,
+    body: &mir::Body<'vir>,
+) -> String {
+    let ty = vir::with_vcx(|vcx| arg.ty(body, vcx.tcx()));
+    format!(
+        "passing `{ty}` to a pure function from a place that does not hold the values behind its \
+         mutable references (e.g. a tuple, a field of generic type or another reference)"
+    )
 }

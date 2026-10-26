@@ -48,12 +48,35 @@ pub(crate) fn ty_pure<'vir>(
 
     // discriminant can only have the selected values
     let snap_to_discr_snap = builder.build_discr_fn(discr_ty.downcast_ty());
+    let shallow_snap_to_discr_snap = builder.has_shallow().then(|| {
+        (
+            builder.build_shallow_discr_fn(discr_ty.downcast_ty()),
+            builder.shallow_type(),
+        )
+    });
+
+    // The shallow snapshot of the variant of the deep snapshot.
+    if builder.has_shallow() {
+        let vcx = builder.vcx;
+        builder.define_to_shallow(|_, snap| {
+            let (last, others) = variants.split_last()?;
+            let last = super::structlike::variant_to_shallow(&last.inner, snap);
+            Some(others.iter().rev().fold(last, |else_, variant| {
+                vcx.mk_ternary_expr(
+                    vcx.mk_eq_expr(snap_to_discr_snap.call()(snap), variant.data.discr),
+                    super::structlike::variant_to_shallow(&variant.inner, snap),
+                    else_,
+                )
+            }))
+        });
+    }
 
     Ok(EnumData::new(
         TyPureEnumData {
             discr_ty,
             discr_prim: *discr_prim,
             snap_to_discr_snap,
+            shallow_snap_to_discr_snap,
         },
         variants,
     ))
@@ -168,7 +191,11 @@ pub(crate) fn ty_impure<'vir>(
             else_,
         )
     });
-    let shallow_inner = variants.iter().fold(base, |else_, variant| {
+    let shallow_base = match task_key.1.to_shallow {
+        Some(to_shallow) => to_shallow.call()(base),
+        None => base,
+    };
+    let shallow_inner = variants.iter().fold(shallow_base, |else_, variant| {
         builder.vcx.mk_ternary_expr(
             vir::expr! { ([snap_disc]) == ([variant.3]) },
             variant.1,

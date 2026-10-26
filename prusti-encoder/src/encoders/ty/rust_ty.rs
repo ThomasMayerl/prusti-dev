@@ -1,7 +1,13 @@
 use std::ops::Deref;
 
 use prusti_interface::environment::EnvQuery;
-use prusti_rustc_interface::{abi, hir::attrs::LangItem, index, middle::ty, span::symbol};
+use prusti_rustc_interface::{
+    abi,
+    hir::attrs::LangItem,
+    index,
+    middle::ty,
+    span::{def_id::DefId, symbol},
+};
 
 use super::{
     data::*,
@@ -437,18 +443,49 @@ impl<'tcx> TyData<'tcx, RustTyDatas> {
         RustTyDecomposition::new(Self::new(data, specifics).alloc(), args)
     }
 
+    /// Whether the deep snapshot of `ty` can differ from its shallow one, i.e.
+    /// whether it can hold the value behind a mutable reference.
     fn construct_deep_snapshot(ty: ty::Ty<'tcx>) -> bool {
         match ty.kind() {
             ty::TyKind::Ref(_, _, ty::Mutability::Mut) => true,
             ty::TyKind::Adt(adt, _) => vir::with_vcx(|vcx| {
-                vcx.tcx()
-                    .generics_of(adt.did())
-                    .own_params
-                    .iter()
-                    .any(|param| matches!(param.kind, ty::GenericParamDefKind::Lifetime))
+                Self::adt_constructs_deep_snapshot(vcx.tcx(), *adt, &mut Vec::new())
             }),
             _ => false,
         }
+    }
+
+    /// An ADT is encoded once over its generic parameters, whose snapshots
+    /// are shallow, so only its fields of other types can hold the value
+    /// behind a mutable reference. `visited` are the ADTs already being looked
+    /// at.
+    fn adt_constructs_deep_snapshot(
+        tcx: ty::TyCtxt<'tcx>,
+        adt: ty::AdtDef<'tcx>,
+        visited: &mut Vec<DefId>,
+    ) -> bool {
+        if visited.contains(&adt.did()) {
+            return false;
+        }
+        visited.push(adt.did());
+        // The permissions to the referents are those of the type's lifetimes
+        // (see `PredicateBuilder::indirect_deep_pres`).
+        let has_lifetime = tcx
+            .generics_of(adt.did())
+            .own_params
+            .iter()
+            .any(|param| matches!(param.kind, ty::GenericParamDefKind::Lifetime));
+        let identity = ty::GenericArgs::identity_for_item(tcx, adt.did());
+        has_lifetime
+            && adt.all_fields().any(|field| {
+                match field.ty(tcx, identity).skip_normalization().kind() {
+                    ty::TyKind::Ref(_, _, ty::Mutability::Mut) => true,
+                    ty::TyKind::Adt(field_adt, _) => {
+                        Self::adt_constructs_deep_snapshot(tcx, *field_adt, visited)
+                    }
+                    _ => false,
+                }
+            })
     }
 
     fn from_prim_ty(ty: ty::Ty<'tcx>) -> RustTyDecomposition<'tcx> {

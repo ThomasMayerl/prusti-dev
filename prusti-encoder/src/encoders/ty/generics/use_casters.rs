@@ -28,6 +28,10 @@ pub struct Casters<'vir, P: PurityCasters> {
 }
 
 impl<'vir, P: PurityCasters> GArgCaster<'vir, P> {
+    pub fn is_no_cast(&self) -> bool {
+        matches!(self, GArgCaster::NoCast)
+    }
+
     fn get(self) -> Option<Casters<'vir, P>> {
         match self {
             GArgCaster::Casters(casters) => Some(casters),
@@ -45,6 +49,12 @@ impl<'vir> GArgCaster<'vir, Pure> {
     ) -> vir::ExprGenSnap<'vir, Curr, Next> {
         self.get()
             .map(|c| {
+                let e = match c.cast.to_shallow {
+                    Some((to_shallow, shallow_ty)) if e.ty() != shallow_ty => {
+                        to_shallow.call()(e.downcast_ty()).upcast_ty()
+                    }
+                    _ => e,
+                };
                 c.cast.make_generic.call()(
                     e.downcast_ty(),
                     c.ty_args.get_ty(),

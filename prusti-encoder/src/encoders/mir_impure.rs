@@ -341,19 +341,6 @@ impl<'vir, 'enc, E: TaskEncoder> ImpureEncVisitor<'vir, 'enc, E> {
                     .encode_cast_snap(rvalue_ty, *cast_kind, operand, operand_snaps)
                     .map_err(EncodeRvalueError::from)?;
                 self.stmts(stmt);
-                // A mutable reference is assigned as its shallow snapshot.
-                let cast = if let ty::TyKind::Ref(_, _, ty::Mutability::Mut) = rvalue_ty.kind() {
-                    let mutref = self.ty_use_pure(rvalue_ty).expect_mutref();
-                    let cast = cast.downcast_ty();
-                    mutref
-                        .prim_to_shallow_snap(
-                            mutref.deref_access(cast),
-                            mutref.metadata_access(cast),
-                        )
-                        .upcast_ty()
-                } else {
-                    cast
-                };
                 Ok(cast.into())
             }
             mir::Rvalue::BinaryOp(op, box (l, r)) => Ok(self
@@ -1354,7 +1341,7 @@ impl<'vir, 'enc, E: TaskEncoder> ImpureEncVisitor<'vir, 'enc, E> {
         let mut collector = OperandCollector(Vec::new());
         collector.visit_statement(statement, location);
         // Unsizing a mutable reference casts the value behind it, so it reads
-        // the deep snapshot; its result is made shallow before it is assigned.
+        // the deep snapshot; the assignment makes its result shallow.
         let depth = match &statement.kind {
             mir::StatementKind::Assign(box (_, mir::Rvalue::Cast(_, _, ty)))
                 if matches!(ty.kind(), ty::TyKind::Ref(_, _, ty::Mutability::Mut)) =>
