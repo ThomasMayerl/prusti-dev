@@ -422,9 +422,9 @@ impl<'vir, 'enc, E: TaskEncoder> ImpureEncVisitor<'vir, 'enc, E> {
                         .into()
                 }
                 TyKind::Ref(.., ty::Mutability::Mut) => {
-                    let (address, _, _, _) = self.encode_place_with_snap(Place::from(*place))?;
+                    let place_expr = self.encode_place(Place::from(*place))?;
 
-                    let metadata = address.expr.metadata;
+                    let metadata = place_expr.expr.metadata;
                     let metadata =
                         metadata.unwrap_or_else(|| self.expect_thin_ptr_metadata(rvalue_ty));
                     // Assign stores the shallow snapshot, so the reference
@@ -433,7 +433,7 @@ impl<'vir, 'enc, E: TaskEncoder> ImpureEncVisitor<'vir, 'enc, E> {
                     let p_rvalue_ty = self.ty_use_impure(rvalue_ty);
                     EncodedRvalue {
                         expr: inner
-                            .prim_to_shallow_snap(address.expr.address, metadata)
+                            .prim_to_shallow_snap(place_expr.expr.address, metadata)
                             .upcast_ty(),
                         post_assign_folds: Some(Box::new(move |lhs_place| {
                             p_rvalue_ty.fold(None, lhs_place, None, None, None)

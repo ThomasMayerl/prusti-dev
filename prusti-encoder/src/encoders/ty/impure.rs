@@ -229,7 +229,13 @@ impl TaskEncoder for TyImpureEnc {
             };
             let output = TyData::new(data, specifics).alloc();
 
-            Ok((builder.build(), output))
+            assert!(
+                !builder.construct_deep_snapshot || builder.inner.function_deep_snap.is_some(),
+                "{} constructs a deep snapshot but did not define it",
+                builder.ty.name()
+            );
+
+            Ok((builder.inner.build(), output))
         })
     }
 
@@ -467,34 +473,6 @@ impl<'vir> PredicateBuilder<'vir> {
             self.inner
                 .mk_function(self.ref_to_shallow_snap, params, &[pred], posts, expr);
         self.inner.function_shallow_snap = Some(function);
-    }
-
-    /// Finishes the encoding. A kind that constructs a separate deep snapshot
-    /// but did not define it (it has nothing that the deep snapshot would
-    /// add, e.g. a type parameter) gets one equal to the shallow snapshot.
-    pub(crate) fn build(mut self) -> TyImpureEncLocal<'vir> {
-        if self.construct_deep_snapshot && self.inner.function_deep_snap.is_none() {
-            let ref_self_decl = self.ref_self_decl();
-            let ref_self = self.vcx.mk_local_ex(ref_self_decl);
-            let params = (
-                ref_self_decl,
-                self.params.ty_decls(),
-                self.params.const_decls(),
-            );
-            let pred = vir::expr! {
-                acc([self.ref_to_pred](ref_self, [..[self.params.ty_exprs()]], [..[self.params.const_exprs()]]))
-            };
-            let shallow = self.ref_to_shallow_snap.call()(
-                ref_self,
-                self.params.ty_exprs(),
-                self.params.const_exprs(),
-            );
-            let function =
-                self.inner
-                    .mk_function(self.ref_to_deep_snap, params, &[pred], &[], Some(shallow));
-            self.inner.function_deep_snap = Some(function);
-        }
-        self.inner.build()
     }
 }
 
