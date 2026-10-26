@@ -79,12 +79,9 @@ impl<'tcx> CallTaskDescription<'tcx> {
         deps: &mut TaskEncoderDependencies<'vir, E>,
     ) -> Result<(DefId, Option<TraitFnEncOutputRef<'vir>>), EncodeFullError<'vir, E>> {
         let tcx = vir::with_vcx(|vcx| vcx.tcx());
-        if self.resolve_trait_calls
-            && let Some(assoc_item) = tcx.opt_associated_item(self.callee)
-            && assoc_item.trait_container(tcx).is_some()
-        {
-            let assoc_enc = deps.require_ref::<TraitFnEnc>(assoc_item.def_id)?;
-            Ok((assoc_item.def_id, Some(assoc_enc)))
+        if self.resolve_trait_calls && crate::trait_support::is_trait_fn(tcx, self.callee) {
+            let assoc_enc = deps.require_ref::<TraitFnEnc>(self.callee)?;
+            Ok((self.callee, Some(assoc_enc)))
         } else {
             Ok((self.callee, None))
         }

@@ -425,25 +425,7 @@ impl<'vir> PredicateBuilder<'vir> {
         if !self.construct_deep_snapshot {
             return;
         }
-        let ref_self_decl = self.ref_self_decl();
-        let ref_self = self.vcx.mk_local_ex(ref_self_decl);
-        let params = (
-            ref_self_decl,
-            self.params.ty_decls(),
-            self.params.const_decls(),
-        );
-        let pred = vir::expr! {
-            acc([self.ref_to_pred](ref_self, [..[self.params.ty_exprs()]], [..[self.params.const_exprs()]]))
-        };
-        let pres = std::iter::once(pred)
-            .chain(deep_pres.iter().copied())
-            .collect::<Vec<_>>();
-        let expr = inner.map(|e| vir::expr! {
-            unfolding ([self.ref_to_pred](ref_self, [..[self.params.ty_exprs()]], [..[self.params.const_exprs()]])) in (e)
-        }.upcast_ty());
-        let function = self
-            .inner
-            .mk_function(self.ref_to_deep_snap, params, &pres, posts, expr);
+        let function = self.mk_snap_function(self.ref_to_deep_snap, inner, deep_pres, posts);
         self.inner.function_deep_snap = Some(function);
     }
 
@@ -456,6 +438,20 @@ impl<'vir> PredicateBuilder<'vir> {
         inner: Option<vir::ExprCSnap<'vir>>,
         posts: &[vir::ExprBool<'vir>],
     ) {
+        let function = self.mk_snap_function(self.ref_to_shallow_snap, inner, &[], posts);
+        self.inner.function_shallow_snap = Some(function);
+    }
+
+    /// The snapshot function `ident` with the precondition
+    /// `acc(ref_to_pred(self, ...)) && extra_pres` and the body
+    /// `unfolding acc(ref_to_pred(self, ...)) in inner`.
+    fn mk_snap_function(
+        &mut self,
+        ident: FunctionIdn<'vir, (vir::Ref, vir::ManyTyVal, vir::ManyCSnap), vir::Snap>,
+        inner: Option<vir::ExprCSnap<'vir>>,
+        extra_pres: &[vir::ExprBool<'vir>],
+        posts: &[vir::ExprBool<'vir>],
+    ) -> vir::Function<'vir> {
         let ref_self_decl = self.ref_self_decl();
         let ref_self = self.vcx.mk_local_ex(ref_self_decl);
         let params = (
@@ -466,13 +462,13 @@ impl<'vir> PredicateBuilder<'vir> {
         let pred = vir::expr! {
             acc([self.ref_to_pred](ref_self, [..[self.params.ty_exprs()]], [..[self.params.const_exprs()]]))
         };
+        let pres = std::iter::once(pred)
+            .chain(extra_pres.iter().copied())
+            .collect::<Vec<_>>();
         let expr = inner.map(|e| vir::expr! {
             unfolding ([self.ref_to_pred](ref_self, [..[self.params.ty_exprs()]], [..[self.params.const_exprs()]])) in (e)
         }.upcast_ty());
-        let function =
-            self.inner
-                .mk_function(self.ref_to_shallow_snap, params, &[pred], posts, expr);
-        self.inner.function_shallow_snap = Some(function);
+        self.inner.mk_function(ident, params, &pres, posts, expr)
     }
 }
 

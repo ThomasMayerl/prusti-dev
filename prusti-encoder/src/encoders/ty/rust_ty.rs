@@ -1,13 +1,21 @@
-use std::ops::Deref;
+use std::{cell::RefCell, ops::Deref};
 
 use prusti_interface::environment::EnvQuery;
 use prusti_rustc_interface::{
     abi,
+    data_structures::fx::FxHashMap,
     hir::attrs::LangItem,
     index,
     middle::ty,
     span::{def_id::DefId, symbol},
 };
+
+thread_local! {
+    /// Whether an ADT constructs a deep snapshot (see
+    /// `RustTyData::construct_deep_snapshot`), by its definition.
+    static ADT_CONSTRUCTS_DEEP_SNAPSHOT: RefCell<FxHashMap<DefId, bool>> =
+        RefCell::new(FxHashMap::default());
+}
 
 use super::{
     data::*,
@@ -446,7 +454,21 @@ impl<'tcx> TyData<'tcx, RustTyDatas> {
     /// Whether the deep snapshot of `ty` can differ from its shallow one, i.e.
     /// whether it can hold the value behind a mutable reference.
     fn construct_deep_snapshot(ty: ty::Ty<'tcx>) -> bool {
-        vir::with_vcx(|vcx| Self::ty_constructs_deep_snapshot(vcx.tcx(), ty, &mut Vec::new()))
+        let tcx = vir::with_vcx(|vcx| vcx.tcx());
+        let ty::TyKind::Adt(adt, _) = ty.kind() else {
+            return Self::ty_constructs_deep_snapshot(tcx, ty, &mut Vec::new());
+        };
+        // It only depends on the ADT's definition, so it is computed once per
+        // ADT (only at the top level, where no ADT was already being looked
+        // at).
+        if let Some(cached) =
+            ADT_CONSTRUCTS_DEEP_SNAPSHOT.with_borrow(|c| c.get(&adt.did()).copied())
+        {
+            return cached;
+        }
+        let result = Self::adt_constructs_deep_snapshot(tcx, ty, *adt, &mut Vec::new());
+        ADT_CONSTRUCTS_DEEP_SNAPSHOT.with_borrow_mut(|c| c.insert(adt.did(), result));
+        result
     }
 
     /// See `construct_deep_snapshot`. `visited` are the ADTs already being

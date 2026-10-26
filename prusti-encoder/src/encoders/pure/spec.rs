@@ -147,6 +147,36 @@ impl<'vir> MirSpecEncOutput<'vir> {
     pub fn post_exprs(&self) -> impl Iterator<Item = vir::ExprBool<'vir>> + '_ {
         self.posts.iter().map(|(post, _)| *post)
     }
+
+    /// The conjunction of the pledges that a call through the trait gets (see
+    /// `trait_fn::trait_pledge`), over the result `ret`, the arguments before
+    /// the call `args` and after the expiry `args_later`; `None` if there are
+    /// none. One with an expiry obligation is left out: a call through the
+    /// trait does not establish the obligation.
+    pub fn trait_pledges(
+        &self,
+        ret: vir::LocalDeclSnap<'vir>,
+        args: &[vir::LocalDeclSnap<'vir>],
+        args_later: &[vir::LocalDeclSnap<'vir>],
+    ) -> Option<vir::ExprBool<'vir>> {
+        vir::with_vcx(|vcx| {
+            let ex = |decls: &[vir::LocalDeclSnap<'vir>]| {
+                decls
+                    .iter()
+                    .map(|&decl| vcx.mk_local_ex(decl))
+                    .collect::<Vec<_>>()
+            };
+            let pledge_args =
+                PledgeExpr::two_state_args(vcx.mk_local_ex(ret), &ex(args), &ex(args_later));
+            let pledges = self
+                .pledges
+                .iter()
+                .filter(|pledge| pledge.expiry_obligation.is_none())
+                .map(|pledge| pledge.expiry_postcondition.expr(pledge_args))
+                .collect::<Vec<_>>();
+            (!pledges.is_empty()).then(|| vcx.mk_conj(&pledges))
+        })
+    }
 }
 
 /// State shared by every spec encoded within one `MirSpecEnc` task.

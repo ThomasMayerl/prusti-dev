@@ -1,12 +1,15 @@
-use crate::encoders::{
-    EncodeResult, ImpureEncVisitor, MirLocalDefEncOutput, MirSpecEnc, Pure,
-    mir_fn::RustSignature,
-    pure::spec::{EncodedPledge, MirSpecEncMode, PledgeArgs, PledgeExpr},
-    ty::{
-        RustTyDecomposition,
-        generics::{GArgs, GArgsCastEnc, GArgsTyEnc, GParams, GenericParamsEnc, trait_fn},
-        indirect::{IndirectPredicatesEnc, projection_for_generalized_idx},
+use crate::{
+    encoders::{
+        EncodeResult, ImpureEncVisitor, MirLocalDefEncOutput, MirSpecEnc, Pure,
+        mir_fn::RustSignature,
+        pure::spec::{EncodedPledge, MirSpecEncMode, PledgeArgs, PledgeExpr},
+        ty::{
+            RustTyDecomposition,
+            generics::{GArgs, GArgsCastEnc, GArgsTyEnc, GParams, GenericParamsEnc, trait_fn},
+            indirect::{IndirectPredicatesEnc, projection_for_generalized_idx},
+        },
     },
+    trait_support::is_trait_fn,
 };
 use pcg::borrow_pcg::{
     FunctionData, FunctionShape, FunctionShapeInput, FunctionShapeNode, FunctionShapeOutput,
@@ -300,11 +303,7 @@ impl<'vir> WandEncOutput<'vir> {
         });
         let args = PledgeExpr::pledge_args(result, args);
         let mut wands = Vec::new();
-        // A call of a trait function goes through the trait (see `TraitFnEnc`).
-        let tcx = visitor.vcx.tcx();
-        let via_trait = tcx
-            .opt_associated_item(self.function_data.def_id())
-            .is_some_and(|item| item.trait_container(tcx).is_some());
+        let via_trait = is_trait_fn(visitor.vcx.tcx(), self.function_data.def_id());
         for wand_data in self.viper_wands() {
             let Some(wand) = self.mk_wand(
                 &wand_data,
@@ -598,11 +597,8 @@ impl TaskEncoder for WandEnc {
                 .map_err(|err| EncodeFullError::EncodingError(err, None))?;
             // The trait pledge refers to a single expiry, so it is only
             // attached if there is a single wand.
-            let tcx = vcx.tcx();
             if let [wand] = output.wands.as_mut_slice()
-                && tcx
-                    .opt_associated_item(def_id)
-                    .is_some_and(|item| item.trait_container(tcx).is_some())
+                && is_trait_fn(vcx.tcx(), def_id)
             {
                 let given_back = wand.rhs.iter().map(|g| g.mir_local()).collect();
                 wand.trait_pledge = Some(trait_fn::trait_pledge(vcx, deps, def_id, &given_back)?);

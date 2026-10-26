@@ -301,25 +301,8 @@ impl TaskEncoder for TraitFnEnc {
             // The trait's own pledges, for a call through the trait (see
             // `trait_pledge`). Every impl satisfies them: it inherits them (an
             // impl cannot declare pledges of its own for a trait method), or
-            // the default body, which is verified against them. One with an
-            // expiry obligation is left out: a call through the trait does
-            // not establish the obligation.
-            let pledge_args = PledgeExpr::two_state_args(
-                vcx.mk_local_ex(func_ret),
-                func_arg_exprs,
-                &func_args_later
-                    .iter()
-                    .map(|arg| vcx.mk_local_ex(arg))
-                    .collect::<Vec<_>>(),
-            );
-            let pledges = spec
-                .pledges
-                .iter()
-                .filter(|pledge| pledge.expiry_obligation.is_none())
-                .map(|pledge| pledge.expiry_postcondition.expr(pledge_args))
-                .collect::<Vec<_>>();
-            if !pledges.is_empty() {
-                let pledges = vcx.mk_conj(&pledges);
+            // the default body, which is verified against them.
+            if let Some(pledges) = spec.trait_pledges(func_ret, &func_args, &func_args_later) {
                 let pledge_func_call = pledge_func.call()(
                     vcx.mk_local_ex(func_ret),
                     two_state_arg_exprs,

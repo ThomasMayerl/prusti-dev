@@ -49,12 +49,7 @@ impl<'vir> GArgCaster<'vir, Pure> {
     ) -> vir::ExprGenSnap<'vir, Curr, Next> {
         self.get()
             .map(|c| {
-                let e = match c.cast.to_shallow {
-                    Some((to_shallow, shallow_ty)) if e.ty() != shallow_ty => {
-                        to_shallow.call()(e.downcast_ty()).upcast_ty()
-                    }
-                    _ => e,
-                };
+                let e = crate::encoders::ty::use_pure::to_shallow(c.cast.to_shallow, e);
                 c.cast.make_generic.call()(
                     e.downcast_ty(),
                     c.ty_args.get_ty(),

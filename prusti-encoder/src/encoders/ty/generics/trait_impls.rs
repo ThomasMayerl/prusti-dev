@@ -15,7 +15,7 @@ use crate::{
         WandEncTask,
         r#const::ConstEncTask,
         mir_fn::{CallTaskDescription, RustSignature},
-        pure::spec::{MirSpecEncMode, PledgeExpr},
+        pure::spec::MirSpecEncMode,
         ty::{
             RustTy, RustTyDecomposition,
             generics::{
@@ -1133,26 +1133,10 @@ impl TaskEncoder for TraitImplItemEnc {
                     ));
 
                     // The pledges, for a call through the trait (see
-                    // `trait_fn::trait_pledge`). One with an expiry obligation
-                    // is left out: a call through the trait does not
-                    // establish the obligation.
-                    let ex = |decl| vcx.mk_local_ex(decl);
-                    let pledge_args = PledgeExpr::two_state_args(
-                        ex(func_ret),
-                        &func_args.iter().map(|&arg| ex(arg)).collect::<Vec<_>>(),
-                        &func_args_later
-                            .iter()
-                            .map(|&arg| ex(arg))
-                            .collect::<Vec<_>>(),
-                    );
-                    let pledges = impl_item_spec
-                        .pledges
-                        .iter()
-                        .filter(|pledge| pledge.expiry_obligation.is_none())
-                        .map(|pledge| pledge.expiry_postcondition.expr(pledge_args))
-                        .collect::<Vec<_>>();
-                    if !pledges.is_empty() {
-                        let pledges = vcx.mk_conj(&pledges);
+                    // `trait_fn::trait_pledge`).
+                    if let Some(pledges) =
+                        impl_item_spec.trait_pledges(func_ret, &func_args, &func_args_later)
+                    {
                         let pledge_func_call = assoc_fn.pledge_func.call()(
                             casted_ret,
                             two_state_casted_args,

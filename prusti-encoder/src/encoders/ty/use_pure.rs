@@ -365,14 +365,16 @@ impl<'vir> TyUsePureRef<'vir> {
 }
 
 /// The shallow snapshot of `snap`, given the conversion and the type of the
-/// shallow snapshot.
+/// shallow snapshot (if the type constructs a deep snapshot).
 pub(super) fn to_shallow<'vir, Curr, Next>(
-    to_shallow: Option<vir::FunctionIdn<'vir, vir::CSnap, vir::CSnap>>,
-    shallow_ty: vir::TypeSnap<'vir>,
+    to_shallow: Option<(
+        vir::FunctionIdn<'vir, vir::CSnap, vir::CSnap>,
+        vir::TypeSnap<'vir>,
+    )>,
     snap: vir::ExprGenSnap<'vir, Curr, Next>,
 ) -> vir::ExprGenSnap<'vir, Curr, Next> {
     match to_shallow {
-        Some(to_shallow) if snap.ty() != shallow_ty => {
+        Some((to_shallow, shallow_ty)) if snap.ty() != shallow_ty => {
             to_shallow.call()(snap.downcast_ty()).upcast_ty()
         }
         _ => snap,
@@ -732,7 +734,9 @@ impl<'vir> TyUsePureStruct<'vir> {
             Some(_) if deep(&snaps) => self.pure.field_snaps_to_snap.call()(&snaps),
             shallow_cons => {
                 for (snap, field) in snaps.iter_mut().zip(&self.fields) {
-                    *snap = to_shallow(field.pure.to_shallow, field.pure.shallow_ty, *snap);
+                    let field_to_shallow =
+                        field.pure.to_shallow.map(|f| (f, field.pure.shallow_ty));
+                    *snap = to_shallow(field_to_shallow, *snap);
                 }
                 shallow_cons.unwrap_or(self.pure.field_snaps_to_snap).call()(&snaps)
             }

@@ -384,14 +384,7 @@ impl<'vir> TyUseImpureData<'vir> {
         self_new_snap: vir::ExprSnap<'vir>,
     ) -> vir::Stmt<'vir> {
         // Assign takes the shallow snapshot.
-        let self_new_snap = match self.impure.to_shallow {
-            Some((to_shallow, shallow_ty)) if vir::HasType::ty(self_new_snap) != shallow_ty => {
-                vir::CastType::upcast_ty(to_shallow.call()(vir::CastType::downcast_ty(
-                    self_new_snap,
-                )))
-            }
-            _ => self_new_snap,
-        };
+        let self_new_snap = super::use_pure::to_shallow(self.impure.to_shallow, self_new_snap);
         vcx.alloc(vir::StmtData::new(vcx.alloc((self.impure.method_assign)(
             self_ref,
             self.args.get_ty(),
