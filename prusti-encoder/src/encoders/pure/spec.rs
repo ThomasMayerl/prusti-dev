@@ -354,7 +354,6 @@ impl TaskEncoder for MirSpecEnc {
                     let pre = local_defs.local_decl_args().map(snap).collect::<Vec<_>>();
                     let later = local_defs
                         .local_decl_args_later()
-                        .into_iter()
                         .map(snap)
                         .collect::<Vec<_>>();
                     let result = snap(local_defs.local_decl_ret());

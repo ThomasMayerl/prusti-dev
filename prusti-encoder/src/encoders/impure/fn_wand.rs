@@ -1,11 +1,11 @@
 use crate::{
     encoders::{
-        EncodeResult, ImpureEncVisitor, MirLocalDefEncOutput, MirSpecEnc, Pure,
+        EncodeResult, ImpureEncVisitor, MirLocalDefEncOutput, MirSpecEnc,
         mir_fn::RustSignature,
         pure::spec::{EncodedPledge, MirSpecEncMode, PledgeArgs, PledgeExpr},
         ty::{
             RustTyDecomposition,
-            generics::{GArgs, GArgsCastEnc, GArgsTyEnc, GParams, GenericParamsEnc, trait_fn},
+            generics::{GArgs, GArgsTyEnc, GParams, GenericParamsEnc, trait_fn},
             indirect::{IndirectPredicatesEnc, projection_for_generalized_idx},
         },
     },
@@ -357,9 +357,7 @@ impl<'vir> WandEncOutput<'vir> {
             // arguments and the result in the callee's generic context.
             let trait_pledge = wand_data.trait_pledge.as_ref();
             let callee_args = match (trait_pledge, call_ctx) {
-                (Some(_), Some(call_args)) => {
-                    self.cast_to_callee_ctx(pledge_args, call_args, deps)?
-                }
+                (Some(_), Some(call_args)) => self.cast_to_callee_ctx(pledge_args, call_args, deps),
                 _ => pledge_args,
             };
             trait_pledge
@@ -409,22 +407,17 @@ impl<'vir> WandEncOutput<'vir> {
         pledge_args: PledgeArgs<'vir>,
         call_args: GArgs<'vir>,
         deps: &mut TaskEncoderDependencies<'vir, E>,
-    ) -> Option<PledgeArgs<'vir>> {
-        let signature = RustSignature::new(self.function_data.def_id());
-        let tys = signature.inputs.iter().chain([&signature.output]);
-        let mut args = Vec::with_capacity(signature.inputs.len() + 1);
-        for (idx, ty) in tys.enumerate() {
-            let local = if idx < signature.inputs.len() {
-                mir::Local::from_usize(idx + 1)
-            } else {
-                mir::RETURN_PLACE
-            };
-            let normalized = ty.decompose_compare_normalize(signature.gparams, call_args);
-            let caster = deps.require_dep::<GArgsCastEnc<Pure>>(normalized).unwrap();
-            args.push(caster.cast_to_callee_ctx(pledge_args[local]));
-        }
-        let result = args.pop()?;
-        Some(PledgeExpr::pledge_args(result, args))
+    ) -> PledgeArgs<'vir> {
+        // As in `generics_subst`, a wand has no way to report an encoding
+        // error.
+        let (inputs, output) = RustSignature::new(self.function_data.def_id())
+            .casters(call_args, deps)
+            .unwrap();
+        let args = inputs.iter().enumerate().map(|(idx, caster)| {
+            caster.cast_to_callee_ctx(pledge_args[mir::Local::from_usize(idx + 1)])
+        });
+        let result = output.cast_to_callee_ctx(pledge_args[mir::RETURN_PLACE]);
+        PledgeExpr::pledge_args(result, args.collect::<Vec<_>>())
     }
 
     /// The pledges are encoded once, at the callee's identity substitution,

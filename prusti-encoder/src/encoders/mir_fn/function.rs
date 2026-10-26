@@ -9,7 +9,7 @@ use crate::encoders::{
     mir_fn::{CallTaskDescription, RustSignature},
     pure::spec::MirSpecEncMode,
     ty::{
-        generics::{GArgCaster, GArgsCastEnc, GArgsTy, GArgsTyEnc, GParams, GenericParamsEnc},
+        generics::{GArgCaster, GArgsTy, GArgsTyEnc, GParams, GenericParamsEnc},
         use_pure::{TyUsePure, TyUsePureImmRef},
     },
 };
@@ -94,27 +94,16 @@ impl TaskEncoder for FunctionCallEnc {
         };
         let signature = RustSignature::new(callee_def_id);
         let ty_args = deps.require_dep::<GArgsTyEnc>(task_key.gargs)?;
-        let inputs = signature
-            .inputs
-            .iter()
-            .map(|ty| {
-                let normalized = ty.decompose_compare_normalize(signature.gparams, task_key.gargs);
-                deps.require_dep::<GArgsCastEnc<Pure>>(normalized)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let normalized = signature
-            .output
-            .decompose_compare_normalize(signature.gparams, task_key.gargs);
-        let output = deps.require_dep::<GArgsCastEnc<Pure>>(normalized)?;
-        // Only arguments declared as shared references are dummied, not ones
-        // of a type parameter instantiated with a reference: the dummying
-        // must agree with the callee's (generic) contract, which ties its
-        // result to `f_` on the same dummied arguments.
+        let (inputs, output) = signature.casters(task_key.gargs, deps)?;
         let arg_tys = signature
             .inputs
             .iter()
             .map(|ty| deps.require_dep::<TyUsePureEnc>(ty.decompose_normalize(task_key.gargs)))
             .collect::<Result<Vec<_>, _>>()?;
+        // Only arguments declared as shared references are dummied, not ones
+        // of a type parameter instantiated with a reference: the dummying
+        // must agree with the callee's (generic) contract, which ties its
+        // result to `f_` on the same dummied arguments.
         let shared_ref_args = signature
             .inputs
             .iter()

@@ -270,7 +270,7 @@ impl TaskEncoder for TraitFnEnc {
             // A default body is not part of the trait's contract: impls may
             // override it with a different result.
             let posts = vcx.mk_conj(&spec.post_exprs().collect::<Vec<_>>());
-            let func_args_later = local_defs.local_decl_args_later();
+            let func_args_later = local_defs.local_decl_args_later().collect::<Vec<_>>();
             let two_state_arg_exprs = vcx.alloc_slice(
                 &func_args
                     .iter()

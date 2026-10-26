@@ -11,7 +11,7 @@ use vir::{CastType, Domain, Method, MethodIdn, ViperIdent, vir_format_identifier
 
 use crate::{
     encoders::{
-        ConstEnc, FunctionCallEnc, MirLocalDefEnc, MirLocalDefEncTask, MirSpecEnc, Pure, WandEnc,
+        ConstEnc, FunctionCallEnc, MirLocalDefEnc, MirLocalDefEncTask, MirSpecEnc, WandEnc,
         WandEncTask,
         r#const::ConstEncTask,
         mir_fn::{CallTaskDescription, RustSignature},
@@ -19,7 +19,7 @@ use crate::{
         ty::{
             RustTy, RustTyDecomposition,
             generics::{
-                GArgs, GArgsCastEnc, GArgsTyEnc, GParams, GenericParamsEnc, r#trait::TraitEnc,
+                GArgs, GArgsTyEnc, GParams, GenericParamsEnc, r#trait::TraitEnc,
                 trait_fn::TraitFnEnc,
             },
             lifted::TyConstructorEnc,
@@ -948,7 +948,6 @@ impl TaskEncoder for TraitImplItemEnc {
             // `impl_item_context` rather than the trait item's context because
             // the parameter indices must match the `impl_item_context` used in
             // `GArgs::new` below.
-            let trait_item_context = GParams::from(trait_item_def_id);
             let item_args = &impl_item_context.rust_params()[impl_context.rust_params().len()..];
             let args = trait_ref.args.iter().chain(item_args.iter().copied());
             let args = tcx.mk_args_from_iter(args);
@@ -1020,7 +1019,7 @@ impl TaskEncoder for TraitImplItemEnc {
                             all_locals: false,
                         })?;
                     let func_args = local_defs.local_decl_args().collect::<Vec<_>>();
-                    let func_args_later = local_defs.local_decl_args_later();
+                    let func_args_later = local_defs.local_decl_args_later().collect::<Vec<_>>();
                     let func_ret = local_defs.local_decl_ret();
 
                     let impl_item_is_pure = crate::encoders::is_function_pure(
@@ -1041,17 +1040,7 @@ impl TaskEncoder for TraitImplItemEnc {
 
                     let signature = RustSignature::new(trait_item_def_id);
 
-                    // TODO: clean up: this kind of casting also happens in
-                    //   `FunctionCallEncOutput::call_pure`.
-                    let casters = signature
-                        .inputs
-                        .iter()
-                        .map(|ty| {
-                            let normalized =
-                                ty.decompose_compare_normalize(trait_item_context, impl_item_args);
-                            deps.require_dep::<GArgsCastEnc<Pure>>(normalized).unwrap()
-                        })
-                        .collect::<Vec<_>>();
+                    let (casters, ret_caster) = signature.casters(impl_item_args, deps)?;
                     let cast_args = |args: &[vir::LocalDeclSnap<'vir>]| {
                         args.iter()
                             .zip(&casters)
@@ -1102,13 +1091,7 @@ impl TaskEncoder for TraitImplItemEnc {
                         });
                     }
                     let posts = vcx.mk_conj(&posts);
-                    let casted_ret = {
-                        let normalized = signature
-                            .output
-                            .decompose_compare_normalize(trait_item_context, impl_item_args);
-                        let caster = deps.require_dep::<GArgsCastEnc<Pure>>(normalized).unwrap();
-                        caster.cast_to_callee_ctx(vcx.mk_local_ex(func_ret))
-                    };
+                    let casted_ret = ret_caster.cast_to_callee_ctx(vcx.mk_local_ex(func_ret));
                     let post_func_call = assoc_fn.post_func.call()(
                         casted_ret,
                         two_state_casted_args,
