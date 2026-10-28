@@ -299,9 +299,10 @@ impl TaskEncoder for TraitFnEnc {
             ));
 
             // The trait's own pledges, for a call through the trait (see
-            // `trait_pledge`). Every impl satisfies them: it inherits them (an
-            // impl cannot declare pledges of its own for a trait method), or
-            // the default body, which is verified against them.
+            // `trait_pledge`). Every impl satisfies them: it inherits them
+            // (declaring its own is unsupported, see
+            // `report_pledge_refinement_error`), or the default body, which
+            // is verified against them.
             if let Some(pledges) = spec.trait_pledges(func_ret, &func_args, &func_args_later) {
                 let pledge_func_call = pledge_func.call()(
                     vcx.mk_local_ex(func_ret),

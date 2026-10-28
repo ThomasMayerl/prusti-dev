@@ -20,5 +20,3 @@ fn client<X: T>(t: &X, x: &mut i32) {
     *r = 7;
     assert!(*x == 7);
 }
-
-fn main() {}

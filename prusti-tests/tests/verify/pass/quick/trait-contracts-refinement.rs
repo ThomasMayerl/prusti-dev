@@ -41,5 +41,3 @@ impl Foo for () {
         (abs(a), abs(b))
     }
 }
-
-fn main() {}

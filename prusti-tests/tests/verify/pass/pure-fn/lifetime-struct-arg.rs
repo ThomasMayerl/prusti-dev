@@ -25,5 +25,3 @@ fn client() {
     let y = wrap_get(&x);
     prusti_assert!(y == 5);
 }
-
-fn main() {}

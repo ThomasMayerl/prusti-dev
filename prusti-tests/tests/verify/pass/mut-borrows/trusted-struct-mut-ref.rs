@@ -41,5 +41,3 @@ fn client(x: &mut i32) {
     prusti_assert!(o.w.get() == 4);
     prusti_assert!(o.n == 0);
 }
-
-fn main() {}

@@ -18,5 +18,3 @@ fn client(s: &mut S) {
     let v2 = get(s);
     prusti_assert!(v2 == 4);
 }
-
-fn main() {}

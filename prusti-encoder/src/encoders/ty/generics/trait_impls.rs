@@ -122,14 +122,18 @@ impl TaskEncoder for TraitImplEnc {
                 }
                 // What the arguments and the result point to, as in the
                 // method's contract: the deep snapshots in the specs read it.
-                // No borrow expires in the checks, so no wand is needed.
-                let wands = deps.require_dep::<WandEnc>(WandEncTask {
+                // No borrow expires in the checks, so no wand is needed. If the
+                // wands cannot be encoded, the method's own encoding
+                // (`MethodEnc`) reports it, so the checks skip the item.
+                let Ok(wands) = deps.require_dep::<WandEnc>(WandEncTask {
                     data: FunctionData::new(impl_item_def_id),
-                })?;
-                impure_arg_preds.extend(wands.indirect_pres(vcx, &local_defs, deps));
-                let indirect_output_preds = wands
-                    .indirect_output_posts(vcx, &local_defs, deps)
+                }) else {
+                    continue;
+                };
+                let indirect_pres = wands
+                    .indirect_pres(vcx, &local_defs, deps)
                     .collect::<Vec<_>>();
+                impure_arg_preds.extend(indirect_pres.iter().copied());
 
                 let mut pre_weaken_pres = impure_arg_preds.clone();
                 pre_weaken_pres.extend(trait_item_spec.pre_exprs());
@@ -182,13 +186,27 @@ impl TaskEncoder for TraitImplEnc {
                 let mut post_strengthen_pres = impure_arg_preds;
                 post_strengthen_pres.extend(trait_item_spec.pre_exprs());
 
-                // exceptionally, we also put the allocated result in the precondition
-                post_strengthen_pres.push(local_defs[mir::RETURN_PLACE].impure_pred);
-                post_strengthen_pres.extend(indirect_output_preds);
-
-                // here we inhale the impl postconditions, since they
-                // can contain "old" variables
+                // The check runs like a call: the method's entry is the
+                // pre-state (which `old` refers to), then the state after the
+                // call is reached by giving up what the arguments point to and
+                // getting it back with new values, along with the result (an
+                // impure impl may change them). Then the impl's postconditions
+                // are inhaled and the trait's exhaled.
                 let mut stmts = bounds;
+                let post_state_preds = if impl_item_is_pure {
+                    wands
+                        .indirect_output_posts(vcx, &local_defs, deps)
+                        .collect::<Vec<_>>()
+                } else {
+                    stmts.extend(indirect_pres.into_iter().map(|pre| vcx.mk_exhale_stmt(pre)));
+                    wands.indirect_posts(vcx, &local_defs, deps).collect()
+                };
+                stmts.push(vcx.mk_inhale_stmt(local_defs[mir::RETURN_PLACE].impure_pred));
+                stmts.extend(
+                    post_state_preds
+                        .into_iter()
+                        .map(|pred| vcx.mk_inhale_stmt(pred)),
+                );
                 for post in impl_item_spec.post_exprs() {
                     stmts.push(vcx.mk_inhale_stmt(post));
                 }

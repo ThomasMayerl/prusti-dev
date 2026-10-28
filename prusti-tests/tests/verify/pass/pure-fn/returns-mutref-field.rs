@@ -18,5 +18,3 @@ fn client(x: &mut i32) {
     *t.r = 4;
     prusti_assert!(*t.r == 4);
 }
-
-fn main() {}

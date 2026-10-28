@@ -24,5 +24,3 @@ fn client<T: Pick>(t: &T) {
     *r = 5;
     prusti_assert!(v == 5);
 }
-
-fn main() {}
