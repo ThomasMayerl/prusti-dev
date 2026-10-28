@@ -15,7 +15,7 @@ fn get(s: &mut S) -> i32 {
 }
 
 #[pure]
-fn get_nested(s: &mut &mut S) -> i32 {
+fn get_nested(s: &mut &mut S) -> i32 { //~ ERROR: the result of pure function `get_nested` might not match its definition
     s.v //~ERROR: dereference of the mutable reference `&mut S` in pure code
 }
 

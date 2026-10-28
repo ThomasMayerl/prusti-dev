@@ -15,7 +15,7 @@ fn get_s(s: S<'_>) -> i32 {
 // snapshots are shallow, so a value read out of it lacks the values behind its
 // mutable references, also when it is copied.
 #[pure]
-fn f(t: (S<'_>, i32)) -> i32 {
+fn f(t: (S<'_>, i32)) -> i32 { //~ ERROR: the result of pure function `f` might not match its definition
     get_s(t.0) //~ ERROR: passing `S<'_>` to a pure function from a place that does not hold the values behind its mutable references
 }
 
