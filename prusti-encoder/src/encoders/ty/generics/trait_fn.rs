@@ -13,7 +13,7 @@ use vir::{CastType, FunctionIdn, HasType, MethodIdn, ViperIdent, vir_format_iden
 use crate::{
     encoders::{
         FunctionCallEnc, MirLocalDefEnc, MirLocalDefEncTask, MirSpecEnc, Pure, TyUseImpureEnc,
-        TyUsePureEnc, WandEnc, WandEncTask,
+        TyUsePureEnc, WandEnc, WandEncTask, WandPledges,
         mir_fn::CallTaskDescription,
         mir_pure::ExprInput,
         pure::spec::{EncodedPledge, MirSpecEncMode, PledgeExpr},
@@ -64,6 +64,9 @@ impl TaskEncoder for TraitFnEnc {
     type TaskDescription<'vir> = DefId;
 
     type OutputRef<'vir> = TraitFnEncOutputRef<'vir>;
+    /// The pledges that the wands of a call of the stub carry (see
+    /// `trait_pledge`), for the caller to apply the wands the stub gives.
+    type OutputFullDependency<'vir> = WandPledges<'vir>;
     type OutputFullLocal<'vir> = (
         vir::Domain<'vir>,
         Vec<vir::Function<'vir>>,
@@ -362,6 +365,7 @@ impl TaskEncoder for TraitFnEnc {
             }
 
             // The method stub, for calls in impure code.
+            let wand_pledges;
             {
                 let mut stub_pres = Vec::new();
                 let mut stub_posts = Vec::new();
@@ -383,7 +387,31 @@ impl TaskEncoder for TraitFnEnc {
                 })?;
                 stub_pres.extend(wands.indirect_pres(vcx, &local_defs, deps));
                 stub_posts.extend(wands.indirect_posts(vcx, &local_defs, deps));
-                stub_posts.extend(wands.wand_posts(vcx, &local_defs, true, deps));
+                // The wands carry the pledge of a call through the trait in
+                // place of the function's own, which only its default body, if
+                // any, establishes: the impl a call resolves to is unknown. It
+                // refers to a single expiry, so it needs a single wand, and only
+                // the trait's pledges without an expiry obligation constrain it
+                // (see `MirSpecEncOutput::trait_pledges`).
+                let trait_pledge = match wands.viper_wands().as_slice() {
+                    [wand]
+                        if spec
+                            .pledges
+                            .iter()
+                            .any(|pledge| pledge.expiry_obligation.is_none()) =>
+                    {
+                        Some(trait_pledge(
+                            vcx,
+                            deps,
+                            def_id,
+                            pledge_func,
+                            &wand.given_back(),
+                        )?)
+                    }
+                    _ => None,
+                };
+                wand_pledges = WandPledges::Replaced(trait_pledge);
+                stub_posts.extend(wands.wand_posts(vcx, &local_defs, wand_pledges, deps));
 
                 stub_pres.push(pre_func.call()(
                     vcx.alloc_slice(
@@ -459,7 +487,7 @@ impl TaskEncoder for TraitFnEnc {
                 None,
             );
 
-            Ok(((trait_domain, funcs, methods), ()))
+            Ok(((trait_domain, funcs, methods), wand_pledges))
         })
     }
 }
@@ -579,7 +607,7 @@ pub(crate) fn with_unknowns<'vir, Curr: 'vir, Next: 'vir>(
 }
 
 /// The pledge of a call through the trait function `def_id`, for its wand
-/// that gives back the arguments `given_back`: `fn_pledge(result, args,
+/// that gives back the arguments `given_back`: `pledge_func(result, args,
 /// args_later)`, with the result just before its borrow expires and the
 /// arguments after that (see `LaterSnap`). The impls' axioms define
 /// `fn_pledge` (see `TraitImplItemEnc`).
@@ -587,13 +615,17 @@ pub(crate) fn with_unknowns<'vir, Curr: 'vir, Next: 'vir>(
 /// Only the result and the arguments are read when reifying (as for
 /// `PledgeExpr::pledge_args`), so that at a call site the callee's generics
 /// in the rest of the expression are substituted.
-pub(crate) fn trait_pledge<'vir, E: TaskEncoder>(
+fn trait_pledge<'vir, E: TaskEncoder>(
     vcx: &'vir vir::VirCtxt<'vir>,
     deps: &mut TaskEncoderDependencies<'vir, E>,
     def_id: DefId,
+    pledge_func: FunctionIdn<
+        'vir,
+        (vir::Snap, vir::ManySnap, vir::ManyTyVal, vir::ManyCSnap),
+        vir::Bool,
+    >,
     given_back: &FxHashSet<mir::Local>,
 ) -> Result<EncodedPledge<'vir>, EncodeFullError<'vir, E>> {
-    let pledge_func = deps.require_ref::<TraitFnEnc>(def_id)?.pledge_func;
     let params = GParams::from(def_id);
     let generics = deps.require_dep::<GArgsTyEnc>(GArgs::new(params, params.rust_params()))?;
     let local_defs = deps.require_dep::<MirLocalDefEnc>(MirLocalDefEncTask::Local {

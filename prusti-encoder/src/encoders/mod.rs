@@ -23,7 +23,7 @@ pub use builtin::{
     ValueCastEnc,
 };
 pub use r#const::ConstEnc;
-pub use impure::fn_wand::{WandEnc, WandEncOutput, WandEncTask};
+pub use impure::fn_wand::{WandEnc, WandEncOutput, WandEncTask, WandPledges};
 pub use local_def::*;
 pub use mir_fn::{FunctionCallEnc, MethodCallEnc, encode_all_in_crate};
 pub use mir_impure::ImpureEncVisitor;

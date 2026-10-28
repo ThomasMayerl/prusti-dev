@@ -1,15 +1,12 @@
-use crate::{
-    encoders::{
-        EncodeResult, ImpureEncVisitor, MirLocalDefEncOutput, MirSpecEnc,
-        mir_fn::RustSignature,
-        pure::spec::{EncodedPledge, MirSpecEncMode, PledgeArgs, PledgeExpr},
-        ty::{
-            RustTyDecomposition,
-            generics::{GArgs, GArgsTyEnc, GParams, GenericParamsEnc, trait_fn},
-            indirect::{IndirectPredicatesEnc, projection_for_generalized_idx},
-        },
+use crate::encoders::{
+    EncodeResult, ImpureEncVisitor, MirLocalDefEncOutput, MirSpecEnc,
+    mir_fn::RustSignature,
+    pure::spec::{EncodedPledge, MirSpecEncMode, PledgeArgs, PledgeExpr},
+    ty::{
+        RustTyDecomposition,
+        generics::{GArgs, GArgsTyEnc, GParams, GenericParamsEnc},
+        indirect::{IndirectPredicatesEnc, projection_for_generalized_idx},
     },
-    trait_support::is_trait_fn,
 };
 use pcg::borrow_pcg::{
     FunctionData, FunctionShape, FunctionShapeInput, FunctionShapeNode, FunctionShapeOutput,
@@ -48,10 +45,15 @@ impl<'vir, E: TaskEncoder> ImpureEncVisitor<'vir, '_, E> {
         let args = PledgeExpr::pledge_args(result, args);
 
         for wand_data in self.wands.viper_wands() {
-            let Some(wand) = self
-                .wands
-                .mk_wand(&wand_data, args, None, None, false, self.vcx, self.deps)
-            else {
+            let Some(wand) = self.wands.mk_wand(
+                &wand_data,
+                args,
+                None,
+                None,
+                WandPledges::Own,
+                self.vcx,
+                self.deps,
+            ) else {
                 continue;
             };
             let rhs = wand_data
@@ -99,6 +101,18 @@ impl<'vir, E: TaskEncoder> ImpureEncVisitor<'vir, '_, E> {
 }
 
 type EncodedPledges<'vir> = Vec<EncodedPledge<'vir>>;
+
+/// The pledges a wand carries.
+#[derive(Clone, Copy, Debug)]
+pub enum WandPledges<'vir> {
+    /// The function's own pledges (see `WandData::pledges`).
+    Own,
+    /// A pledge in place of the function's own, over the arguments and the
+    /// result in the callee's generic context and without an expiry
+    /// obligation, e.g. that of a call through a trait (see
+    /// `trait_fn::trait_pledge`).
+    Replaced(Option<EncodedPledge<'vir>>),
+}
 
 /// Not tied to a caller or callee context. `indirect_pres`, `indirect_posts`,
 /// `wand_posts`, and `package_wands` are identity-substituted and intended for
@@ -256,14 +270,12 @@ impl<'vir> WandEncOutput<'vir> {
         })
     }
 
-    /// The wands of the function's contract. `via_trait` is whether it is
-    /// the contract of a call through the trait (see `WandData::trait_pledge`)
-    /// rather than of the function's own body.
+    /// The wands of the function's contract, carrying `pledges`.
     pub fn wand_posts<'a, E: TaskEncoder>(
         &'a self,
         vcx: &'vir vir::VirCtxt<'vir>,
         local_defs: &'a MirLocalDefEncOutput<'vir>,
-        via_trait: bool,
+        pledges: WandPledges<'vir>,
         deps: &'a mut TaskEncoderDependencies<'vir, E>,
     ) -> impl Iterator<Item = vir::ExprBool<'vir>> + 'a {
         let wand_result =
@@ -276,7 +288,7 @@ impl<'vir> WandEncOutput<'vir> {
 
         // TODO: wands for late-bound regions
         self.viper_wands().into_iter().filter_map(move |wand_data| {
-            let wand = self.mk_wand(&wand_data, args, None, None, via_trait, vcx, deps)?;
+            let wand = self.mk_wand(&wand_data, args, None, None, pledges, vcx, deps)?;
             Some(vcx.mk_let_expr(
                 wand_result,
                 local_defs[mir::RETURN_PLACE].impure_snap,
@@ -285,12 +297,16 @@ impl<'vir> WandEncOutput<'vir> {
         })
     }
 
+    /// The wands of a call, carrying `pledges` (as the callee's contract
+    /// does, see `MethodCallEncOutput::wand_pledges`).
+    #[allow(clippy::too_many_arguments)]
     pub fn call_wands<E: TaskEncoder>(
         &self,
         arguments: &[vir::ExprSnap<'vir>],
         label_pre: &'vir str,
         label_post: &'vir str,
         call_ctx: GArgs<'vir>,
+        pledges: WandPledges<'vir>,
         visitor: &mut ImpureEncVisitor<'vir, '_, E>,
     ) -> Vec<vir::Wand<'vir>> {
         let result = visitor
@@ -303,14 +319,13 @@ impl<'vir> WandEncOutput<'vir> {
         });
         let args = PledgeExpr::pledge_args(result, args);
         let mut wands = Vec::new();
-        let via_trait = is_trait_fn(visitor.vcx.tcx(), self.function_data.def_id());
         for wand_data in self.viper_wands() {
             let Some(wand) = self.mk_wand(
                 &wand_data,
                 args,
                 Some(label_pre),
                 Some(call_ctx),
-                via_trait,
+                pledges,
                 visitor.vcx,
                 visitor.deps,
             ) else {
@@ -321,9 +336,7 @@ impl<'vir> WandEncOutput<'vir> {
         wands
     }
 
-    /// The wand of `wand_data`. `via_trait` is whether the wand is that of a
-    /// call through the trait, which carries the trait pledge instead of the
-    /// function's own pledges (see `WandData::trait_pledge`).
+    /// The wand of `wand_data`, carrying `pledges`.
     #[allow(clippy::too_many_arguments)]
     fn mk_wand<E: TaskEncoder>(
         &self,
@@ -331,7 +344,7 @@ impl<'vir> WandEncOutput<'vir> {
         pledge_args: PledgeArgs<'vir>,
         pledge_old_label: Option<&'vir str>,
         call_ctx: WandCallContext<'vir>,
-        via_trait: bool,
+        pledges: WandPledges<'vir>,
         vcx: &'vir vir::VirCtxt<'vir>,
         deps: &mut TaskEncoderDependencies<'vir, E>,
     ) -> Option<vir::Wand<'vir>> {
@@ -352,26 +365,26 @@ impl<'vir> WandEncOutput<'vir> {
                 })
             })
             .collect::<Vec<_>>();
-        let pledges = if via_trait {
-            // The trait pledge is a function of the trait, so it takes the
-            // arguments and the result in the callee's generic context.
-            let trait_pledge = wand_data.trait_pledge.as_ref();
-            let callee_args = match (trait_pledge, call_ctx) {
-                (Some(_), Some(call_args)) => self.cast_to_callee_ctx(pledge_args, call_args, deps),
-                _ => pledge_args,
-            };
-            trait_pledge
-                .map(|pledge| pledge_expr(&pledge.expiry_postcondition, callee_args))
-                .into_iter()
-                .collect::<Vec<_>>()
-        } else {
-            wand_data
-                .pledges
-                .iter()
-                .map(|pledge| pledge_expr(&pledge.expiry_postcondition, pledge_args))
-                .collect()
+        let (pledges, pledge_args) = match &pledges {
+            WandPledges::Own => (wand_data.pledges.as_slice(), pledge_args),
+            WandPledges::Replaced(pledge) => {
+                let pledge_args = match (pledge, call_ctx) {
+                    (Some(_), Some(call_args)) => {
+                        self.cast_to_callee_ctx(pledge_args, call_args, deps)
+                    }
+                    _ => pledge_args,
+                };
+                (pledge.as_slice(), pledge_args)
+            }
         };
-        let rhs = rhs.into_iter().chain(pledges).collect::<Vec<_>>();
+        let rhs = rhs
+            .into_iter()
+            .chain(
+                pledges
+                    .iter()
+                    .map(|pledge| pledge_expr(&pledge.expiry_postcondition, pledge_args)),
+            )
+            .collect::<Vec<_>>();
         if rhs.is_empty() {
             // We skip emitting the wand when there is nothing on the RHS, i.e.,
             // nothing would be unblocked by applying this wand, nor are there
@@ -385,16 +398,10 @@ impl<'vir> WandEncOutput<'vir> {
             })
         });
         let lhs = lhs
-            .chain(
-                wand_data
-                    .pledges
-                    .iter()
-                    .filter(|_| !via_trait)
-                    .filter_map(|pledge| {
-                        let obligation = pledge.expiry_obligation.as_ref()?;
-                        Some(pledge_expr(obligation, pledge_args))
-                    }),
-            )
+            .chain(pledges.iter().filter_map(|pledge| {
+                let obligation = pledge.expiry_obligation.as_ref()?;
+                Some(pledge_expr(obligation, pledge_args))
+            }))
             .collect::<Vec<_>>();
         let lhs = vcx.mk_conj(&lhs);
         Some(vcx.mk_wand(lhs, rhs))
@@ -481,23 +488,18 @@ pub struct WandData<'vir> {
     /// non-empty.
     lhs: Vec<WandLhsKey>,
     pledges: EncodedPledges<'vir>,
-    /// For a trait function, the pledge of a call through the trait (see
-    /// `trait_fn::trait_pledge`), which a call cannot know otherwise: the
-    /// impl it resolves to is unknown. It replaces the function's own
-    /// pledges, which only its default body, if any, establishes.
-    trait_pledge: Option<EncodedPledge<'vir>>,
 }
 
 impl<'vir> WandData<'vir> {
     pub fn new(lhs: Vec<WandLhsKey>, rhs: Vec<WandRhsKey>, pledges: EncodedPledges<'vir>) -> Self {
         debug_assert!(!lhs.is_empty());
         debug_assert!(!rhs.is_empty());
-        Self {
-            rhs,
-            lhs,
-            pledges,
-            trait_pledge: None,
-        }
+        Self { rhs, lhs, pledges }
+    }
+
+    /// The arguments the wand gives back.
+    pub fn given_back(&self) -> FxHashSet<mir::Local> {
+        self.rhs.iter().map(|g| g.mir_local()).collect()
     }
 }
 
@@ -588,14 +590,6 @@ impl TaskEncoder for WandEnc {
             output.wands = output
                 .select_wands(wands, !pledges.is_empty(), &edges, vcx, deps)
                 .map_err(|err| EncodeFullError::EncodingError(err, None))?;
-            // The trait pledge refers to a single expiry, so it is only
-            // attached if there is a single wand.
-            if let [wand] = output.wands.as_mut_slice()
-                && is_trait_fn(vcx.tcx(), def_id)
-            {
-                let given_back = wand.rhs.iter().map(|g| g.mir_local()).collect();
-                wand.trait_pledge = Some(trait_fn::trait_pledge(vcx, deps, def_id, &given_back)?);
-            }
             Ok(((), output))
         })
     }

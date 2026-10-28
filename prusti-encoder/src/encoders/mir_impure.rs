@@ -56,7 +56,7 @@ use crate::encoders::{
     },
 };
 
-use super::WandEncOutput;
+use super::{WandEncOutput, WandPledges};
 
 #[derive(Clone, Copy)]
 struct FromToVar<'vir> {
@@ -166,7 +166,8 @@ where
 
     pub tmp_ctr: usize,
     pub label_ctr: usize,
-    pub call_labels: FxHashMap<mir::BasicBlock, (&'vir str, &'vir str)>,
+    /// The calls encoded as impure method calls, by block.
+    pub calls: FxHashMap<mir::BasicBlock, EncodedCall<'vir>>,
     /// Blocks whose call terminator was not encoded as an impure method call
     /// (intrinsics, `prusti_contracts` builtins) and thus
     /// created no wand to apply on expiry.
@@ -219,6 +220,17 @@ macro_rules! comment {
 /// [PureRvalueEnc::EncodePlaceCtxt]) only to the encoding of the statement's
 /// effect; all other operand reads (terminators, repack guides) pass `None`.
 type OperandSnaps<'vir> = Option<FxHashMap<mir::Place<'vir>, vir::ExprSnap<'vir>>>;
+
+/// A call encoded as an impure method call.
+#[derive(Clone, Copy)]
+pub struct EncodedCall<'vir> {
+    /// The labels of the states just before and just after the call.
+    pub label_pre: &'vir str,
+    pub label_post: &'vir str,
+    /// The pledges that the wands of the call carry (see
+    /// `MethodCallEncOutput::wand_pledges`).
+    pub wand_pledges: WandPledges<'vir>,
+}
 
 /// Which snapshot of a place to read.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -850,10 +862,16 @@ impl<'vir, 'enc, E: TaskEncoder> ImpureEncVisitor<'vir, 'enc, E> {
                                     self.encode_operand_snap_immediate(&operand.node)
                                 }))
                                 .collect::<EncodeResult<'vir, Vec<_>, E>>()?;
-                        let (label_pre, label_post) = self.call_labels[&call.location().block];
+                        let encoded_call = self.calls[&call.location().block];
                         let call_ctx = self.gargs(caller_substs);
-                        let wands =
-                            wands.call_wands(&wand_args, label_pre, label_post, call_ctx, self);
+                        let wands = wands.call_wands(
+                            &wand_args,
+                            encoded_call.label_pre,
+                            encoded_call.label_post,
+                            call_ctx,
+                            encoded_call.wand_pledges,
+                            self,
+                        );
                         for wand in wands {
                             if let Some(footprint) = &mut footprint {
                                 footprint.parts.push(self.vcx.mk_wand_expr(wand));
@@ -1669,7 +1687,7 @@ impl<'vir, 'enc, E: TaskEncoder> ImpureEncVisitor<'vir, 'enc, E> {
         /// index (ties broken by insertion order): every non-back-edge
         /// predecessor of a block is then encoded before the block itself,
         /// in particular both branches before their join. The borrow-expiry
-        /// handling relies on this: a call's `call_labels`/`wandless_calls`
+        /// handling relies on this: a call's `calls`/`wandless_calls`
         /// entry must exist by the time an expiring borrow references the
         /// call's block. `heads_hit` is payload, not part of the order.
         struct WorkItem {
@@ -2486,8 +2504,14 @@ impl<'vir, 'enc, E: TaskEncoder> ImpureEncVisitor<'vir, 'enc, E> {
                         );
                         self.stmts(call);
                         let label_post = self.new_label("post");
-                        self.call_labels
-                            .insert(location.block, (label_pre, label_post));
+                        self.calls.insert(
+                            location.block,
+                            EncodedCall {
+                                label_pre,
+                                label_post,
+                                wand_pledges: func_out.wand_pledges,
+                            },
+                        );
                     }
                     Ok(())
                 })?;
